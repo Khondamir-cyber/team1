@@ -1,4 +1,4 @@
-# Velocity: presentation brief for Claude
+# Velocity, your AI private banker: presentation brief for Claude
 
 Team 1 · Microsoft x LSEG London Hackathon 2026 · pitch slot 5 to 7 minutes including a live demo
 
@@ -42,80 +42,69 @@ should go and explains why.
 
 The deck must hit all five sections and make each scoring criterion obvious to a judge.
 
-## The product: Velocity, the AI growth analyst
+## The product: Velocity, your AI private banker
 
-**One line:** Velocity turns a client's own words into a $100,000 growth portfolio, has an AI investment committee debate
-it, and proves every number in its explanation against live public data.
+**One line:** Velocity works like a private banker: it gets to know the client first, explains today's markets in plain
+English, shows which data drove each decision, then builds a hedged, multi asset $100,000 portfolio that an AI investment
+committee debates and every number of which is traced back to public data.
 
-**Client we chose:** a high growth investor in public markets (not a startup investor). Default persona: Alex Morgan, 32,
-product engineer in London, $100,000 lump sum from vested shares, 10+ year horizon, no need to withdraw, can sit through a
-35% fall but not 50%, believes in AI, cloud software and digital platforms, listed liquid stocks only, no crypto or tobacco,
-no single stock above 15%, wants to beat the Nasdaq 100. Every limit is editable in the app, and the client is typed in
-plain English, so a cautious client gets a very different portfolio.
+**The four step client journey (this is the live demo):**
 
-**How it works, in order:**
+1. **Know your client.** A questionnaire like a private bank's onboarding: age, job, tax residence, base currency (GBP or
+   USD), goal and horizon, withdrawals, money needed within 2 years, share of total wealth, emergency savings, income
+   stability, concentrated positions (Alex already holds about $40,000 of NVDA employer shares), how they would react to a
+   20% fall, the largest fall they can live with, experience with options, themes they believe in, exclusions, ESG, and
+   which asset classes they are comfortable with. Velocity scores **willingness** and **ability** to take risk separately
+   and invests at the **lower** of the two (standard private banking practice). The AI banker then reads the answers,
+   spots contradictions (for example "very risk averse" but "grow as fast as possible", or adding more NVDA on top of
+   employer shares) and asks 2 to 4 follow up questions before setting the final risk score with a plain English rationale.
+2. **The markets today.** Charts with one or two plain sentences each: US interest rates (3 month, 10 and 30 year),
+   inflation, unemployment, world stock markets (S&P 500, Nasdaq 100, FTSE 100, Euro Stoxx 50, Nikkei 225, emerging
+   markets), the VIX fear gauge, bonds and credit (Treasuries, investment grade, high yield, credit spreads), currencies
+   (GBP/USD, EUR/USD), gold and oil, and Bitcoin only if the client allows crypto. An AI "big picture" summary on top.
+3. **What the data tells us.** A card per conclusion: the data point, its source (for example "FRED DFII10" or "Yahoo
+   Finance ^VIX"), the reading, what it means in plain English, and what the portfolio will do about it (for example: VIX
+   low, so insurance is cheap, so buy protective puts now; inflation above target, so hold inflation linked bonds and gold).
+4. **Your portfolio.** Multi asset and core and satellite, only from asset classes the client allowed: core index funds
+   (VOO, QQQ, VXUS), capped growth stock picks scored by the AI, government bonds and cash (SGOV, SHY, IEF, TLT, TIP),
+   corporate credit (LQD, HYG), real assets (REITs VNQ, gold GLD, commodities DBC), alternatives and hedges (managed
+   futures DBMF, minimum volatility USMV) and Bitcoin ETF IBIT if allowed. The client's risk score sets the bond floor and
+   the stock cap; the optimiser also enforces a volatility ceiling and a loss smaller than the client's limit in every
+   historical crisis replay (COVID 2020, 2022 rate shock, DeepSeek January 2025, 2025 tariff shock).
+   **Hedges like a private bank:** a protective put or collar on the equity exposure priced from the live Yahoo Finance
+   option chain (Black Scholes fallback), with a payoff chart and the loss with and without the hedge if the index falls
+   30%; and for a client who thinks in pounds, a GBP/USD forward hedge on 100% of the bonds and part of the equities.
+   Then the **AI investment committee** (Growth PM, Risk Officer, Macro Strategist, CIO) debates and amends the stock
+   picks, a **verifier** checks every figure in the explanation against the data, and the client can **ask the banker**
+   questions in a chat.
 
-1. **Profile agent (LLM):** reads the client's brief in plain English and turns it into a structured investment policy:
-   horizon, risk tolerance, max drawdown, position cap, themes, exclusions, plus a list of anything it had to assume.
-2. **Live public data:** Yahoo Finance (7 years of daily prices for 40 growth stocks and 9 index, bond and diversifier ETFs, fundamentals,
-   analyst consensus and price targets, company news, 10 year and 3 month Treasury yields, VIX, high yield vs Treasury
-   credit); FRED from the St. Louis Fed (10 year real yield, CPI, unemployment, credit spreads); Finnhub optional.
-   Everything is cached so the demo survives bad wifi.
-3. **Embeddings (text-embedding-3-large):** every company's business description is compared with the client's themes,
-   so "AI" exposure is measured from what the company actually does, not from a label.
-4. **News agent (LLM):** reads recent headlines per company and scores what they mean for fundamentals over 6 to 12 months.
-5. **Quant engine:** scores every stock on 8 factors (growth, momentum, quality, valuation, analyst views, news
-   sentiment, theme fit, low volatility). The weights shift with the client: a cautious client puts more weight on
-   quality and low volatility.
-6. **Macro overlay:** transparent rules from the rates, credit and volatility data (for example, if real yields are high
-   the valuation penalty rises; if credit is stressed the T bill floor rises).
-7. **Core and satellite portfolio with the client's limits as hard rules:** every portfolio has four sleeves:
-   **core index funds** (Vanguard S&P 500 VOO, Invesco Nasdaq 100 QQQ, Vanguard international VXUS), **growth stock
-   picks** as a capped satellite, **government bonds and cash** (T bills SGOV, 1 to 3 year SHY, 7 to 10 year IEF,
-   inflation linked TIP) and **diversifiers** (gold GLD, minimum volatility stocks USMV). The client's risk tolerance sets
-   the strategic policy (for risk tolerance 8: bonds and cash at least 21%, index funds at least 20%, single stocks at most
-   40%). The optimiser then maximises expected return subject to that policy, a single stock cap, a theme cap, a
-   volatility ceiling, and **a loss smaller than the client's max drawdown in every historical crisis replayed on today's
-   portfolio**: COVID crash 2020, the 2022 rate shock, the DeepSeek AI selloff of January 2025 and the 2025 tariff shock.
-8. **AI investment committee (the originality hook):** three LLM agents write memos in parallel: a Growth PM makes the
-   bull case, a Risk Officer attacks concentration and drawdowns, a Macro Strategist reads rates and credit. A CIO agent
-   decides, can remove or cap stocks, and the optimiser re runs with those changes. The debate and the before/after
-   weights are shown in the app.
-9. **Verifier:** every percentage and multiple the AI writes in its explanation is automatically checked against the
-   source data; each holding shows a "figures verified" badge. This is our answer to AI hallucination in finance.
+**Data used:** Yahoo Finance (prices, fundamentals, analyst targets, news, indices, yields, VIX, FX, gold, oil, Bitcoin,
+option chains), FRED from the St. Louis Fed (inflation, unemployment, real yields, credit spreads, UK rates), Finnhub
+optional. **AI used:** Azure OpenAI gpt-6.1-sol for the banker follow ups, market explanation, news reading and the
+committee; text-embedding-3-large to measure how well each company fits the client's themes.
 
-**What the client gets:** dollar amount and number of shares per stock and per fund, grouped into the four sleeves; a headline recommendation; a
-portfolio thesis; a suitability check against their own drawdown limit; one card per holding with its role, why it is
-there (with verified figures), its key risk and a measurable sell trigger; a "Why not X?" explainer for any stock left
-out; a downloadable client memo and trade list; and an "Ask the analyst" chat grounded in the same data.
+**Built with:** Python, Streamlit, Azure OpenAI, yfinance, FRED, SciPy optimiser, Plotly. Code: github.com/Khondamir-cyber/team1
 
-**Risk evidence in the app:** growth of $100,000 over 3 years vs QQQ and SPY (flagged as in sample), an honest walk
-forward test of the method rebalanced quarterly using only data known at the time, the four crisis replays against the
-client's limit, a 2,000 path Monte Carlo over the client's horizon, and each holding's share of total risk.
-
-**Built with:** Python, Streamlit, Azure OpenAI (chat model gpt-6.1-sol, embeddings text-embedding-3-large), yfinance,
-FRED, SciPy optimiser, Plotly. Code: github.com/Khondamir-cyber/team1
-
-## Slide plan (8 slides, about 6 minutes; the live demo sits inside slide 6)
+## Slide plan (8 slides, about 6 minutes; the live demo sits inside slides 4 to 6)
 
 | # | Slide | On the slide | Talk track (speaker notes) | Time |
 |---|---|---|---|---|
-| 1 | Title | "Velocity: the AI growth analyst". Subtitle: "From a client's own words to a verified $100,000 portfolio". Team 1, names | "Every robo adviser asks you to fill in a form. Velocity listens to you, then shows its working." | 0:20 |
-| 2 | 01 The client | Persona card for Alex Morgan with 4 big numbers: 10+ years, 35% max fall, 15% max per stock, $100,000. Quote of his brief | "Alex wants growth, but he told us exactly how much pain he can take. Those words become hard rules in our optimiser, not a questionnaire score." | 0:40 |
-| 3 | 02 The data | Logo strip or table: Yahoo Finance, FRED, Finnhub; what each gives; "40 growth stocks, 6 defensive ETFs, 7 years daily, refreshed live" | "All public, all free, all cached so nothing breaks on stage." | 0:30 |
-| 4 | 03 What the AI does | Pipeline diagram, left to right: Client brief → Profile agent → Data + Embeddings + News agent → Quant engine and macro overlay → Optimiser with client limits → AI investment committee → Verifier → Recommendation | "Five LLM jobs, each doing something a human analyst would take days to do, and a quant engine keeping them honest." | 0:50 |
-| 5 | The committee and the verifier (originality) | Three agent icons (Growth PM, Risk Officer, Macro Strategist) feeding a CIO; a before/after weights mini chart; a green badge "[LIVE: 20/25] figures traced to source data" | "Our AI argues with itself before it advises you, and then we fact check it. Every number in the explanation is traced to the data." | 0:40 |
-| 6 | 04 The recommendation: live demo | Screenshot of the treemap and trade list as backup [LIVE: screenshot] with 3 big numbers: [LIVE: % index funds / % stocks / % bonds and cash], [LIVE: expected return], [LIVE: worst crisis loss vs 35% limit] | Switch to the app. Demo order: read Alex's brief with AI; build the portfolio and narrate the live steps; recommendation tab and verified badges; committee memos; "Why not ...?" on a famous stock left out; ask the analyst "What if Nvidia falls 40%?". Then, if time: change the brief to a cautious client and rebuild to show the bond sleeve grow and the stock satellite shrink. | 2:30 |
-| 7 | Risk check | Crisis replay bar chart with the client's limit line [LIVE: screenshot]; walk forward result [LIVE: method CAGR vs QQQ CAGR, max drawdowns] | "We replay four real crises on today's portfolio and the optimiser is not allowed to break the client's limit in any of them." | 0:30 |
-| 8 | Why Velocity wins | Four ticks mapped to the judging criteria: client's words become hard limits (client focus); embeddings plus agent debate (data and AI); verified, specific, sized trades (quality); committee plus fact check (originality). "Educational hackathon project. Not financial advice." | "Velocity is designed around the client, explains itself, and proves its numbers." | 0:20 |
+| 1 | Title | "Velocity: your AI private banker". Subtitle: "Know the client. Read the market. Show the evidence. Then invest." Team 1, names | "Most robo advisers ask five questions and sell you a model portfolio. A private banker listens first. So does Velocity." | 0:20 |
+| 2 | 01 The client | Alex Morgan, 32, London, thinks in pounds, $100,000, 10 years, would lose sleep below a 30% fall, already holds about $40,000 of NVDA employer shares. Willingness vs ability bar | "Alex says he wants maximum growth, but his answers say he is more careful than that, and he already has a big NVDA bet. Velocity catches both." | 0:40 |
+| 3 | 02 The data | Table: Yahoo Finance (what), FRED (what), Finnhub optional; "50+ tickers, 7 years daily, live option chains" | "All public, all free, cached so nothing breaks on stage." | 0:25 |
+| 4 | 03 What the AI does | Pipeline: KYC questionnaire → AI banker follow ups → market briefing → data conclusions → embeddings and news agent → optimiser with client limits → hedges → AI investment committee → verifier | "Each AI step does something a human analyst would take days to do, and rules keep it honest." | 0:40 |
+| 5 | Live demo, part 1 | Screenshot backups: questionnaire with follow ups [LIVE], market charts [LIVE], conclusion cards [LIVE] | Demo: fill or show the questionnaire, read the banker's follow ups and answer one; show 2 market charts and their plain notes; show 2 conclusion cards ("VIX low, so we buy puts"). | 1:40 |
+| 6 | 04 The recommendation: live demo, part 2 | Treemap by sleeve [LIVE], 3 big numbers: [LIVE: % bonds and cash], [LIVE: hedge cost and loss if index falls 30% with vs without], [LIVE: figures verified] | Demo: portfolio treemap, the hedge card and payoff chart, one verified holding card, the committee memos, "Why not NVDA?" (already held), ask the banker "What if markets fall 30%?" | 1:30 |
+| 7 | Risk check | Crisis replay chart against the client's limit [LIVE], walk forward vs benchmark [LIVE] | "We replay four real crises on today's portfolio; the optimiser is not allowed to break the client's limit in any of them." | 0:25 |
+| 8 | Why Velocity wins | Ticks mapped to judging: KYC drives every limit (client focus); embeddings, agents, live option pricing (data and AI); sized trades with hedges and verified reasons (quality); banker journey plus AI committee plus fact check (originality). "Educational hackathon project. Not financial advice." | "Velocity knows the client, explains the market, proves its numbers and protects the downside." | 0:20 |
 
 ## Screenshots to collect from the app (after a fresh build)
 
-1. Client section with the policy card filled in by the AI.
-2. Recommendation tab: headline, treemap and trade list.
-3. One holding card with the green "figures verified" badge.
-4. "How the AI decided" tab: the three committee memos side by side and the before/after chart.
-5. Risk check tab: crisis replay chart with the red client limit line, and the Monte Carlo fan chart.
+1. Step 1: the questionnaire, the willingness vs ability chart and the banker's follow up questions.
+2. Step 2: two market charts with their plain English notes.
+3. Step 3: the conclusion cards (data point, source, reading, what we do).
+4. Step 4: treemap by sleeve, trade list, the hedge card with payoff chart, one "figures verified" holding card.
+5. "How the AI decided": the three committee memos; "Risk check": crisis replay chart with the client limit line.
 
 ## Rules for the deck
 

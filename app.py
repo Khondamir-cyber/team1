@@ -41,6 +41,11 @@ def pct(x, nd=1, sign=False):
     return f"{x * 100:+.{nd}f}%" if sign else f"{x * 100:.{nd}f}%"
 
 
+def esc(text) -> str:
+    """Escape $ so Streamlit markdown does not render dollar amounts as LaTeX."""
+    return str(text or "").replace("\\$", "$").replace("$", "\\$")
+
+
 def kpi(col, label, value):
     col.markdown(f'<div class="kpi"><div class="v">{value}</div><div class="l">{label}</div></div>', unsafe_allow_html=True)
 
@@ -113,10 +118,11 @@ with c2:
         p["horizon_years"] = a1.slider("Horizon (years)", 1, 30, int(p["horizon_years"]))
         p["risk_tolerance"] = a2.slider("Risk tolerance", 1, 10, int(p["risk_tolerance"]))
         p["max_drawdown"] = a1.slider("Max drawdown the client accepts", 0.10, 0.60, float(p["max_drawdown"]), 0.01)
-        p["target_vol"] = a2.slider("Volatility ceiling", 0.10, 0.45, float(p["target_vol"]), 0.01)
+        p["target_vol"] = config.target_vol_for(p["risk_tolerance"], p["max_drawdown"])
+        a2.metric("Volatility ceiling (set from risk tolerance and drawdown)", pct(p["target_vol"]))
         p["max_position"] = a1.slider("Max single position", 0.05, 0.30, float(p["max_position"]), 0.01)
         p["n_holdings"] = a2.slider("Number of stocks", 6, 20, int(p["n_holdings"]))
-        p["cash_buffer"] = a1.slider("Base T bill buffer", 0.0, 0.15, float(p["cash_buffer"]), 0.01)
+        p["cash_buffer"] = a1.slider("Minimum T bill holding", 0.0, 0.15, float(p["cash_buffer"]), 0.01)
         p["benchmark"] = a2.selectbox("Benchmark", ["QQQ", "SPY"], index=0 if p["benchmark"] == "QQQ" else 1)
         p["themes"] = st.multiselect("Themes", list(config.THEMES), default=p["themes"])
         p["exclude_tickers"] = [t.strip().upper() for t in st.text_input("Exclude tickers (comma separated)", ", ".join(p["exclude_tickers"])).split(",") if t.strip()]
@@ -150,12 +156,12 @@ tabs = st.tabs(["04 · Recommendation", "03 · How the AI decided", "Risk check"
 
 # ------------------------------------------------------------------ recommendation
 with tabs[0]:
-    st.markdown(f'<div class="headline">{d.get("headline", "")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="headline">{esc(d.get("headline", ""))}</div>', unsafe_allow_html=True)
     st.write("")
     v = res["verification"]
     st_ = res["stats"]
     k = st.columns(6)
-    kpi(k[0], "Stocks + T bill buffer", f"{len(w)} + {pct(res['cash'], 0)}")
+    kpi(k[0], f"In {len(res['stock_weights'])} stocks / defensive", f"{pct(res['opt_info']['stock_share'], 0)} / {pct(res['opt_info']['defensive_share'], 0)}")
     kpi(k[1], "Model expected return", pct(res["opt_info"]["exp_return"]))
     kpi(k[2], "Expected volatility", pct(res["opt_info"]["exp_vol"]))
     worst = res["stress"]["Portfolio"].min() if len(res["stress"]) else np.nan
@@ -166,7 +172,7 @@ with tabs[0]:
     left, right = st.columns([1.1, 1])
     with left:
         t = res["trades"].copy()
-        t["Theme"] = t["Ticker"].map(lambda x: config.TICKER_THEME.get(x, "Liquidity"))
+        t["Theme"] = t["Ticker"].map(lambda x: config.TICKER_THEME.get(x, "Defensive sleeve"))
         fig = px_.treemap(t[t["Dollars"] > 0], path=["Theme", "Ticker"], values="Dollars",
                           color="Theme", color_discrete_sequence=[PURPLE, "#8b5cf6", "#c084fc", YELLOW, "#7c3aed", "#a78bfa", "#ddd6fe", GREY])
         fig.update_traces(texttemplate="<b>%{label}</b><br>$%{value:,.0f}", textfont_size=14)
@@ -181,8 +187,19 @@ with tabs[0]:
         st.dataframe(show, hide_index=True, width="stretch", height=420)
 
     st.markdown("#### Why this portfolio")
-    st.write(d.get("portfolio_thesis", ""))
-    st.markdown(f"**Suitability check.** {d.get('suitability', '')}")
+    st.markdown(esc(d.get("portfolio_thesis", "")))
+    st.markdown(f"**Suitability check.** {esc(d.get('suitability', ''))}")
+    oi = res["opt_info"]
+    lim = (f"Hard limits enforced by the optimiser: max {pct(prof['max_position'], 0)} per stock, volatility at most "
+           f"{pct(oi['target_vol'])}, and a loss smaller than {pct(prof['max_drawdown'], 0)} in every historical stress replay.")
+    if oi.get("binding"):
+        lim += " The limits that shaped this portfolio: " + "; ".join(oi["binding"]) + "."
+    st.info(lim)
+    dw = res["defensive_weights"]
+    if len(dw):
+        st.markdown("**Defensive sleeve, " + pct(dw.sum()) + ":** " + ", ".join(
+            f"{t} ({config.DEFENSIVE[t][0]}) {pct(v)}" for t, v in dw.items()) +
+            ". Sized by the optimiser so the portfolio stays inside the client's volatility and drawdown limits.")
     if res["removed_by_committee"] or res["caps_by_committee"]:
         chg = [f"removed **{t}** ({r})" for t, r in res["removed_by_committee"].items()] + \
               [f"capped **{t}** at {pct(c, 0)}" for t, c in res["caps_by_committee"].items()]
@@ -202,9 +219,9 @@ with tabs[0]:
         with cols[i % 2].container(border=True):
             nm = feat.loc[tk, "name"] if tk in feat.index else tk
             st.markdown(f"**{tk}** · {nm} · <span class='pill'>{h.get('role', '')}</span> **{pct(w[tk])}** "
-                        f"(${w[tk] * config.INVESTMENT_AMOUNT:,.0f})", unsafe_allow_html=True)
-            st.markdown(h.get("why", ""))
-            st.markdown(f"⚠️ *Risk:* {h.get('key_risk', '')}  \n🚪 *Sell if:* {h.get('sell_trigger', '')}")
+                        f"(\\${w[tk] * config.INVESTMENT_AMOUNT:,.0f})", unsafe_allow_html=True)
+            st.markdown(esc(h.get("why", "")))
+            st.markdown(f"⚠️ *Risk:* {esc(h.get('key_risk', ''))}  \n🚪 *Sell if:* {esc(h.get('sell_trigger', ''))}")
             st.markdown(badge + src, unsafe_allow_html=True)
             bad = [s for s, ok in checks if not ok]
             if bad:
@@ -212,7 +229,7 @@ with tabs[0]:
     if d.get("key_risks"):
         st.markdown("#### Portfolio risks")
         for r in d["key_risks"]:
-            st.markdown(f"* {r}")
+            st.markdown(f"* {esc(r)}")
     m1, m2 = st.columns(2)
     m1.download_button("⬇️ Client memo (Markdown)", report.memo_markdown(res), file_name="velocity_recommendation.md", width="stretch")
     m2.download_button("⬇️ Trade list (CSV)", res["trades"].to_csv(index=False), file_name="velocity_trades.csv", width="stretch")
@@ -259,8 +276,8 @@ with tabs[1]:
         for col, (name, memo) in zip(mc, res["memos"].items()):
             with col.container(border=True, height=420):
                 st.markdown(f"**{icons.get(name, '')} {name}**")
-                st.markdown(memo)
-        st.markdown(f"**🏛️ CIO decision.** {d.get('dissent', '')}")
+                st.markdown(esc(memo))
+        st.markdown(f"**🏛️ CIO decision.** {esc(d.get('dissent', ''))}")
         adj = d.get("adjustments") or []
         if adj:
             st.dataframe(pd.DataFrame(adj), hide_index=True, width="stretch")
@@ -279,7 +296,7 @@ with tabs[1]:
     pick = st.selectbox("Pick a stock we did not buy", others)
     if pick:
         st.write(res["why_not"].get(pick, ""))
-        cmp_ = pd.DataFrame({pick: res["z"].loc[pick], "Average holding": res["z"].loc[list(w.index)].mean()})
+        cmp_ = pd.DataFrame({pick: res["z"].loc[pick], "Average holding": res["z"].loc[list(res["stock_weights"].index)].mean()})
         st.plotly_chart(px_.bar(cmp_, barmode="group", color_discrete_sequence=[RED, PURPLE]).update_layout(
             height=300, margin=dict(t=10), yaxis_title="z score", xaxis_title=""), width="stretch")
 
@@ -344,7 +361,7 @@ with tabs[2]:
         fig.update_layout(height=360, yaxis_tickprefix="$", xaxis_title="Years", margin=dict(t=10))
         st.plotly_chart(fig, width="stretch")
         term = mcr["terminal"]
-        st.caption(f"Median ${np.median(term):,.0f}; 5th percentile ${np.percentile(term, 5):,.0f}; 95th ${np.percentile(term, 95):,.0f}. "
+        st.caption(f"Median \\${np.median(term):,.0f}; 5th percentile \\${np.percentile(term, 5):,.0f}; 95th \\${np.percentile(term, 95):,.0f}. "
                    f"Block bootstrap of the portfolio's own daily returns (5y), drift set to the model expected return "
                    f"{pct(res['opt_info']['exp_return'])}.")
     st.markdown("#### Where the risk comes from")
@@ -391,15 +408,15 @@ with tabs[4]:
     if not ss.chat:
         st.caption("Try: *What happens to this portfolio if Nvidia falls 40%?* · *Why so little in Tesla?* · *How would you de-risk this for a 5 year horizon?*")
     for msg in ss.chat:
-        st.chat_message(msg["role"]).markdown(msg["content"])
+        st.chat_message(msg["role"]).markdown(esc(msg["content"]))
     q = st.chat_input("Ask the analyst", disabled=not llm.available())
     if q:
         ss.chat.append({"role": "user", "content": q})
-        st.chat_message("user").markdown(q)
+        st.chat_message("user").markdown(esc(q))
         with st.chat_message("assistant"), st.spinner("Thinking..."):
             try:
                 ans = llm.ask(q, res["packet"], ss.chat)
             except Exception as e:
                 ans = f"The analyst is unavailable right now: {e}"
-            st.markdown(ans)
+            st.markdown(esc(ans))
         ss.chat.append({"role": "assistant", "content": ans})

@@ -16,11 +16,16 @@ def fake_market():
     rng = np.random.default_rng(1)
     idx = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=252 * 7)
     px = {}
+    mkt = 0.0006 + 0.013 * rng.standard_normal(len(idx))
+    crash = (idx >= "2022-01-03") & (idx <= "2022-10-14")
+    mkt[crash] -= 0.0025                                   # a realistic 2022 style bear market
+    mkt[(idx >= "2020-02-19") & (idx <= "2020-03-23")] -= 0.012
     for i, t in enumerate(config.ALL_TICKERS):
-        mu, sig = 0.0006 + 0.0002 * rng.standard_normal(), 0.012 + 0.015 * rng.random()
-        r = mu + sig * rng.standard_normal(len(idx))
-        if t == "SGOV":
-            r = np.full(len(idx), 0.00017)
+        if t in config.DEFENSIVE:
+            r = 0.00015 + 0.004 * rng.standard_normal(len(idx)) * (0.05 if t == "SGOV" else 1) + (0.4 * mkt if t == "USMV" else 0)
+        else:
+            beta = 1.0 if t in ("QQQ", "SPY") else 0.8 + 0.8 * rng.random()
+            r = beta * mkt + (0 if t in ("QQQ", "SPY") else 0.014 * rng.standard_normal(len(idx))) + 0.0002 * rng.standard_normal()
         s = pd.Series(100 * np.exp(np.cumsum(r)), index=idx)
         if t == "ARM":
             s.iloc[:252 * 5] = np.nan  # recent IPO
@@ -80,5 +85,11 @@ if __name__ == "__main__":
     print("verification", res["verification"]["verified"], "/", res["verification"]["total"])
     print("walk forward", {k: round(v, 3) for k, v in res["walk_forward"].get("stats", {}).items()})
     print(report.memo_markdown(res)[:1500])
-    res2 = pipeline.run(md, prof, use_ai=False, progress=lambda m: None)
-    print("no AI run ok:", len(res2["weights"]), res2["decision"]["holdings"][0]["why"])
+    for rt, dd in [(2, 0.15), (5, 0.25), (9, 0.40)]:
+        p2 = dict(prof, risk_tolerance=rt, max_drawdown=dd)
+        r2 = pipeline.run(md, p2, use_ai=False, progress=lambda m: None)
+        oi = r2["opt_info"]
+        print(f"rt={rt} dd={dd}: stocks {oi['stock_share']:.0%} ({len(r2['stock_weights'])} names), defensive {oi['defensive_share']:.0%}, "
+              f"vol {oi['exp_vol']:.1%} <= {oi['target_vol']:.1%}, worst stress {r2['stress']['Portfolio'].min():.1%}, converged {oi['converged']}, binding {oi['binding']}")
+        print("   ", r2["defensive_weights"].round(3).to_dict(), "| top stocks", list(r2["stock_weights"].index[:5]))
+    print(r2["decision"]["headline"])

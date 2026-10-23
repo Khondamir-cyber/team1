@@ -48,6 +48,8 @@ def _exclude(feat: pd.DataFrame, prof: dict) -> dict:
 
 
 def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> dict:
+    prof = dict(prof)
+    prof["target_vol"] = config.target_vol_for(prof["risk_tolerance"], prof["max_drawdown"])
     res = {"profile": prof, "errors": [], "sources": md["sources"]}
     px, fund = md["px"], md["fund"]
     bench = prof.get("benchmark", "QQQ") if prof.get("benchmark") in px.columns else "QQQ"
@@ -89,6 +91,9 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
     overlay = A.macro_overlay(snap, prof)
     weights = dict(config.DEFAULT_FACTOR_WEIGHTS)
     weights["valuation"] *= overlay["valuation_mult"]
+    rt = prof["risk_tolerance"]
+    weights["low_vol"] = 0.04 * (10 - rt)          # cautious clients reward steadier stocks
+    weights["quality"] += 0.02 * (10 - rt)
     if not sentiment:
         weights["sentiment"] = 0
     comp = A.composite(z, weights).sort_values(ascending=False)
@@ -102,8 +107,8 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
     caps, removed = {}, {}
 
     def build(selection):
-        w, info = A.optimise(selection, comp, rets, prof, overlay["cash"], rf, overlay["vol_mult"], caps)
-        return w[w > 0.004], info
+        stress = A.scenario_matrix(selection + list(config.DEFENSIVE), px, bench)
+        return A.optimise(selection, comp, rets, prof, overlay["cash"], rf, overlay["vol_mult"], caps, stress)
 
     selection = eligible[:n]
     w, info = build(selection)
@@ -121,7 +126,7 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
             res["pre_adjust"] = {"weights": w.copy(), "stats": dict(res["stats"])}
             for adj in (decision.get("adjustments") or [])[:3]:
                 t = str(adj.get("ticker", "")).upper()
-                if t not in w.index:
+                if t not in w.index or t not in config.STOCKS:
                     continue
                 if adj.get("action") == "remove":
                     removed[t] = adj.get("reason", "")
@@ -151,12 +156,13 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
                                [dict(h, role=h["role"] + " (added after committee review)") for h in fb["holdings"] if h["ticker"] not in have]
         for k in ("headline", "portfolio_thesis", "suitability", "key_risks", "dissent"):
             decision.setdefault(k, fb[k])
+    decision["holdings"] = [h for h in decision["holdings"] if h.get("ticker") in config.STOCKS]
     order = {t: i for i, t in enumerate(w.index)}
     decision["holdings"].sort(key=lambda h: order.get(h.get("ticker"), 99))
     res["decision"] = decision
     res["packet"] = packet
     res["verification"] = report.verify_decision(decision, packet)
-    res["trades"] = A.trade_list(w, pm["price"], overlay["cash"], config.INVESTMENT_AMOUNT, prof.get("fractional_shares", True))
+    res["trades"] = A.trade_list(w, pm["price"], 0.0, config.INVESTMENT_AMOUNT, prof.get("fractional_shares", True))
 
     progress("Running the walk forward test (quarterly rebalances using only past data)")
     try:
@@ -169,16 +175,15 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
 
 
 def _risk(res, w, info, px, rets, prof, bench, rf):
-    cash = res["cash"]
-    cash_r = rets[config.CASH_PROXY] if config.CASH_PROXY in rets else None
-    port = A.portfolio_returns(w, rets, cash, rf, cash_r).iloc[-756:]
-    port = port[port.index >= rets[list(w.index)].dropna().index.min()] if len(w) else port
+    port = A.portfolio_returns(w, rets, 0.0, rf).iloc[-756:]
     b = rets[bench].reindex(port.index)
     res.update(weights=w, opt_info=info, port_daily=port, stats=A.perf_stats(port, rf, b),
                bench_stats=A.perf_stats(b, rf), bench_daily=b,
                spy_daily=rets["SPY"].reindex(port.index) if "SPY" in rets else None,
-               risk_contrib=A.risk_contributions(w, rets), stress=A.stress_test(w, px, cash, config.INVESTMENT_AMOUNT, bench))
-    long = A.portfolio_returns(w, rets, cash, rf, cash_r).iloc[-1260:]
+               risk_contrib=A.risk_contributions(w, rets), stress=A.stress_test(w, px, 0.0, config.INVESTMENT_AMOUNT, bench),
+               stock_weights=w[[t for t in w.index if t in config.STOCKS]],
+               defensive_weights=w[[t for t in w.index if t in config.DEFENSIVE]])
+    long = A.portfolio_returns(w, rets, 0.0, rf).iloc[-1260:]
     long.attrs["drift"] = np.log1p(info["exp_return"]) / A.TRADING_DAYS
     mc = A.monte_carlo(long, prof["horizon_years"], config.INVESTMENT_AMOUNT)
     res["mc"] = mc
@@ -187,9 +192,9 @@ def _risk(res, w, info, px, rets, prof, bench, rf):
 
 def _with_misc(res, eligible, n):
     comp, feat = res["composite"], res["features"]
-    held = set(res["weights"].index)
+    held = set(res["stock_weights"].index)
     near = [t for t in eligible if t not in held][:5]
-    cutoff = comp[list(res["weights"].index)].min()
+    cutoff = comp[list(held)].min() if held else comp.max()
     z = res["z"]
     why = {}
     for t in comp.index:

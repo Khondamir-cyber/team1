@@ -35,7 +35,23 @@ STOCKS = list(TICKER_THEME)
 
 BENCHMARKS = ["QQQ", "SPY"]
 CASH_PROXY = "SGOV"  # iShares 0 to 3 Month Treasury Bond ETF, used for the liquidity sleeve
-ALL_TICKERS = STOCKS + BENCHMARKS + [CASH_PROXY]
+
+# Defensive sleeve the optimiser can use to respect the client's risk limits.
+# (description, long run premium over T bills assumed for the optimiser, max weight)
+DEFENSIVE = {
+    "SGOV": ("0 to 3 month US T bills", 0.000, 1.00),
+    "SHY": ("1 to 3 year US Treasuries", 0.003, 0.40),
+    "IEF": ("7 to 10 year US Treasuries", 0.010, 0.35),
+    "TIP": ("Inflation linked US Treasuries", 0.010, 0.25),
+    "GLD": ("Gold", 0.015, 0.10),
+    "USMV": ("US minimum volatility equities", 0.040, 0.30),
+}
+ALL_TICKERS = STOCKS + BENCHMARKS + list(DEFENSIVE)
+
+
+def target_vol_for(risk_tolerance: int, max_drawdown: float) -> float:
+    """Volatility ceiling implied by the client's risk tolerance and drawdown limit (the tighter of the two)."""
+    return round(min(0.06 + 0.025 * risk_tolerance, 0.8 * max_drawdown), 3)
 
 # Theme descriptions the embedding model compares each company's business summary against.
 THEMES = {
@@ -78,6 +94,7 @@ DEFAULT_FACTOR_WEIGHTS = {
     "analyst": 0.10,
     "valuation": 0.08,
     "sentiment": 0.08,
+    "low_vol": 0.0,   # set from risk tolerance at runtime
 }
 
 DEFAULT_PROFILE_TEXT = (

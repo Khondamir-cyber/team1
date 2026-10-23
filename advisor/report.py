@@ -46,7 +46,7 @@ def build_packet(res: dict) -> dict:
     prof = res["profile"]
     feat, z, comp = res["features"], res["z"], res["composite"]
     ranks = comp.rank(ascending=False).astype(int)
-    hold = [holding_facts(t, feat, z, comp, res.get("sentiment"), int(ranks[t])) for t in res["weights"].index]
+    hold = [holding_facts(t, feat, z, comp, res.get("sentiment"), int(ranks[t])) for t in res["stock_weights"].index]
     for h in hold:
         h["risk_contribution_pct"] = _r(res["risk_contrib"].get(h["ticker"]), 100)
     near = [{"ticker": t, "composite_rank": int(ranks[t]), "composite_score": _r(comp[t], 1, 2),
@@ -64,7 +64,11 @@ def build_packet(res: dict) -> dict:
         "amount_usd": config.INVESTMENT_AMOUNT,
         "macro": {k: (_r(v, 1, 2) if isinstance(v, (int, float)) else v) for k, v in res["macro"].items()},
         "macro_overlay_rules_applied": res["overlay"]["notes"],
-        "t_bill_buffer_pct": _r(res["cash"], 100),
+        "stock_sleeve_pct": _r(res["opt_info"]["stock_share"], 100),
+        "defensive_sleeve": [{"ticker": t, "holds": config.DEFENSIVE[t][0], "weight_pct": _r(v, 100),
+                              "share_of_risk_pct": _r(res["risk_contrib"].get(t), 100)} for t, v in res["defensive_weights"].items()],
+        "defensive_sleeve_pct": _r(res["opt_info"]["defensive_share"], 100),
+        "binding_client_limits": res["opt_info"].get("binding", []),
         "portfolio": {
             "expected_return_model_pct": _r(res["opt_info"]["exp_return"], 100),
             "expected_volatility_pct": _r(res["opt_info"]["exp_vol"], 100),
@@ -91,6 +95,7 @@ def fallback_holding(h: dict) -> dict:
         "valuation": f"a forward P/E of {h.get('forward_pe_x')}x" if h.get("forward_pe_x") is not None else None,
         "analyst": f"{h.get('analyst_target_upside_pct')}% upside to the analyst consensus target" if h.get("analyst_target_upside_pct") is not None else None,
         "theme": f"a theme fit score of {h.get('theme_fit')}" if h.get("theme_fit") is not None else None,
+        "low_vol": f"lower volatility than most peers ({h.get('volatility_1y_pct')}% a year)" if h.get("volatility_1y_pct") is not None else None,
         "sentiment": f"positive news flow ({h.get('news_driver')})" if h.get("news_driver") else None,
     }
     order = sorted(z, key=lambda k: z[k], reverse=True)
@@ -119,10 +124,12 @@ def fallback_decision(packet: dict) -> dict:
     c, p = packet["client"], packet["portfolio"]
     worst = min(p["stress_tests"], key=lambda s: s["portfolio_pct"]) if p["stress_tests"] else None
     return {
-        "headline": f"Invest ${packet['amount_usd']:,} across {len(packet['holdings'])} high growth leaders plus a {packet['t_bill_buffer_pct']}% T bill buffer.",
+        "headline": f"Invest ${packet['amount_usd']:,}: {packet['stock_sleeve_pct']}% in {len(packet['holdings'])} high growth stocks and "
+                    f"{packet['defensive_sleeve_pct']}% in a defensive sleeve sized to the client's risk limits.",
         "portfolio_thesis": f"The portfolio targets {c['objective'].lower().rstrip('.')} by holding the highest ranked companies on growth, "
                             f"momentum, quality and theme fit, sized by an optimiser that caps any single stock at "
-                            f"{round(c['max_position'] * 100)}% and volatility near {round(c['target_vol'] * 100)}%.",
+                            f"{round(c['max_position'] * 100)}% and volatility at or below {round(c['target_vol'] * 100)}%, "
+                            f"while losing less than {round(c['max_drawdown'] * 100)}% in every historical stress replay.",
         "suitability": (f"In the worst historical stress ({worst['scenario']}) the portfolio would have moved {worst['portfolio_pct']}%, versus the "
                         f"client's stated limit of {round(c['max_drawdown'] * 100)}%." if worst else ""),
         "adjustments": [],
@@ -193,7 +200,8 @@ def memo_markdown(res: dict) -> str:
              "## Allocation", "", "| Ticker | Weight | Dollars | Shares |", "|---|---|---|---|"]
     for _, r in trades.iterrows():
         sh = "" if pd.isna(r.get("Shares")) else f"{r['Shares']:.3f}"
-        lines.append(f"| {r['Ticker']} | {r['Weight'] * 100:.1f}% | ${r['Dollars']:,.0f} | {sh} |")
+        nm = f"{r['Ticker']} ({r['Holding']})" if r.get("Holding") else r["Ticker"]
+        lines.append(f"| {nm} | {r['Weight'] * 100:.1f}% | ${r['Dollars']:,.0f} | {sh} |")
     lines += ["", "## Why each holding"]
     for h in d.get("holdings", []):
         if h.get("ticker") not in res["weights"].index:

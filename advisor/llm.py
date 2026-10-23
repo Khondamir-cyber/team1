@@ -87,7 +87,8 @@ def parse_profile(text: str) -> dict:
     # clamp to sane ranges so a bad parse can never break the optimiser
     prof["risk_tolerance"] = int(np.clip(int(prof["risk_tolerance"]), 1, 10))
     prof["max_drawdown"] = float(np.clip(float(prof["max_drawdown"]), 0.05, 0.8))
-    prof["target_vol"] = float(np.clip(float(prof["target_vol"]), 0.08, 0.45))
+    prof["max_drawdown"] = float(np.clip(float(prof["max_drawdown"]), 0.05, 0.8))
+    prof["target_vol"] = config.target_vol_for(int(prof["risk_tolerance"]), prof["max_drawdown"])
     prof["max_position"] = float(np.clip(float(prof["max_position"]), 0.05, 0.3))
     prof["n_holdings"] = int(np.clip(int(prof["n_holdings"]), 6, 20))
     prof["cash_buffer"] = float(np.clip(float(prof["cash_buffer"]), 0, 0.15))
@@ -176,7 +177,12 @@ Return ONLY a JSON object:
  "key_risks": ["3 portfolio level risks"],
  "dissent": "1 to 2 sentences on where the Risk Officer disagreed and how you resolved it"
 }
-Rules: adjustments at most 3, only for current holdings, only if the risk case is genuinely convincing (an empty list is fine).
+Context: the optimiser already enforces the client's limits as hard constraints (single stock cap, volatility ceiling,
+and a loss no worse than the client's max drawdown in every historical stress replay); "binding_client_limits" says which
+ones shaped the portfolio and the defensive sleeve absorbs the rest. Your adjustments are applied automatically and the
+optimiser re runs, so write the headline as a positive recommendation for the portfolio AFTER your adjustments, never
+"do not implement". Explain the split between the stock sleeve and the defensive sleeve in the thesis.
+Rules: adjustments at most 3, only for stock holdings, only if the risk case is genuinely convincing (an empty list is fine).
 Include every current holding in "holdings". Do not mention portfolio weights or dollar amounts in "why" (they are set after
 your adjustments by the optimiser)."""
 

@@ -83,7 +83,22 @@ def build_packet(res: dict) -> dict:
         },
         "holdings": hold,
         "near_misses": near,
+        "market_conclusions": [{k: v for k, v in c.items()} for c in res.get("conclusions", [])],
+        "client_kyc": {k: prof.get(k) for k in ("willingness", "ability", "risk_rationale", "base_currency", "allowed_assets", "cash_buffer")},
+        "option_hedge": _hedge_summary(res.get("option_hedge")),
+        "fx_hedge": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in (res.get("fx_hedge") or {}).items()} or None,
     }
+
+
+def _hedge_summary(h):
+    if not h:
+        return None
+    return {"style": h["style"], "underlying": h["underlying"], "expiry": h["expiry"], "contracts": h["contracts"],
+            "put_strike": round(h["put_strike"], 2), "call_strike": round(h["call_strike"], 2) if h.get("call_strike") else None,
+            "net_cost_usd": round(h["net_cost"], 0), "net_cost_pct": round(h["net_cost_pct"] * 100, 2),
+            "protection_starts_pct": round(h["protection_from"] * 100, 1),
+            "upside_capped_at_pct": round(h["cap_at"] * 100, 1) if h.get("cap_at") is not None else None,
+            "loss_if_index_falls_30pct_usd": {k: round(v, 0) for k, v in h["loss_at_minus_30"].items()}, "pricing_source": h["source"]}
 
 
 # ---------------------------------------------------------------- deterministic fallback (no LLM or LLM failure)

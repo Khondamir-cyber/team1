@@ -41,7 +41,12 @@ def fake_market():
     macro = pd.DataFrame({"DGS10": 4.2, "DGS3MO": 4.0, "DGS5": 4.0, "VIXCLS": 17.0, "HYG": 80.0, "IEF": 95.0,
                           "DFII10": 1.9, "CPIAUCSL": 320.0}, index=idx[-700:])
     news = {t: [{"title": f"{t} beats estimates", "date": "2026-10-20"}] for t in config.STOCKS}
-    return {"px": px, "fund": fund, "macro": macro, "news": news, "analyst": pd.DataFrame(), "sources": {"fake": {"status": "test"}}}
+    lv = {"^TNX": 4.2, "^IRX": 4.0, "^TYX": 4.6, "^VIX": 16, "GBPUSD=X": 1.30, "EURUSD=X": 1.10, "DX-Y.NYB": 100}
+    mk = pd.DataFrame({t: (lv[t] + 0.05 * np.cumsum(rng.standard_normal(len(idx[-756:])))) if t in lv
+                       else 100 * np.exp(np.cumsum(0.0004 + 0.01 * rng.standard_normal(len(idx[-756:]))))
+                       for t in config.MARKET_TICKERS}, index=idx[-756:])
+    macro = macro.assign(UNRATE=4.1, BAMLH0A0HYM2=3.0, CPIAUCSL=np.linspace(300, 320, len(macro)))
+    return {"px": px, "fund": fund, "macro": macro, "news": news, "analyst": pd.DataFrame(), "mk": mk, "sources": {"fake": {"status": "test"}}}
 
 
 class FakeEmb:
@@ -53,6 +58,13 @@ def fake_chat(system, user, max_tokens=0, json_mode=False):
     if "onboarding" in system:
         return json.dumps({"client_name": "Test", "horizon_years": 12, "risk_tolerance": 8, "max_drawdown": 0.35,
                            "themes": ["Artificial intelligence", "Cloud software"], "exclude_tickers": ["TSLA"]})
+    if "Know Your Client meeting. You have" in system:
+        return json.dumps({"observations": "You want growth but already own a lot of NVDA.", "questions": ["Will you keep the NVDA shares?", "Any big purchases soon?"]})
+    if "finishing a Know Your Client" in system:
+        return json.dumps({"risk_tolerance": 7, "max_drawdown": 0.28, "options_ok": True, "objective": "Grow wealth over 10 years.",
+                           "summary": "Young professional.", "rationale": "Long horizon but a concentrated NVDA position."})
+    if "explaining today's markets" in system:
+        return json.dumps({"big_picture": "Rates are high and stocks are strong.", "sections": {"Stock markets": "Stocks rose."}})
     if "news analyst" in system:
         return json.dumps({t: {"score": 0.4, "driver": "beat estimates", "n": 1} for t in json.loads(user)})
     if "Chief Investment Officer" in system:

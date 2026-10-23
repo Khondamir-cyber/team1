@@ -142,7 +142,7 @@ def macro_overlay(snap: dict, profile: dict) -> dict:
         notes.append(f"VIX at {vix:.1f}: volatility regime normal.")
     if snap.get("CURVE") is not None and snap["CURVE"] < 0:
         notes.append(f"Yield curve inverted ({snap['CURVE_LABEL']} {snap['CURVE']:.2f}pp): recession risk flagged to the committee.")
-    cash = float(min(0.15, profile.get("cash_buffer", 0.03) + cash_add))
+    cash = float(min(0.6, profile.get("cash_buffer", 0.03) + cash_add))
     return {"cash": cash, "valuation_mult": val_mult, "vol_mult": vol_mult, "notes": notes}
 
 
@@ -193,7 +193,9 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     """Score tilted mean variance over the chosen stocks plus the defensive sleeve, subject to:
     weights sum to 100%, single stock cap, theme cap, volatility ceiling, T bill floor, and (when given) a loss
     no worse than the client's max drawdown in every historical stress window."""
-    defensive = [t for t in config.ETFS if t in rets.columns and rets[t].iloc[-504:].notna().sum() > 120]
+    allowed = set(profile.get("allowed_assets") or config.DEFAULT_ALLOWED) | {"gov_bonds"}
+    defensive = [t for t in config.ETFS if config.ETFS[t][4] in allowed
+                 and t in rets.columns and rets[t].iloc[-504:].notna().sum() > 120]
     tickers = list(stocks) + defensive
     r = rets[tickers].iloc[-504:].fillna(0)
     cov = shrunk_cov(r, group=list(stocks)).values
@@ -218,14 +220,20 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
         m = np.concatenate([(themes == th).values.astype(float), np.zeros(len(defensive))])
         cons.append({"type": "ineq", "fun": lambda w, m=m: profile.get("max_theme_weight", 0.4) - m @ w})
     # strategic policy: core index floor, government bond floor, single stock and diversifier ceilings
-    pol = {**config.strategic_policy(rt), **(profile.get("policy") or {})}
+    pol = dict(pol0)
     sl = np.array([config.sleeve_of(t) for t in tickers])
     m_st, m_ix = (sl == config.SLEEVE_STOCKS).astype(float), (sl == config.SLEEVE_INDEX).astype(float)
-    m_bd, m_dv = (sl == config.SLEEVE_BONDS).astype(float), (sl == config.SLEEVE_DIVERS).astype(float)
+    m_bd = (sl == config.SLEEVE_BONDS).astype(float)
+    m_dv = np.isin(sl, [config.SLEEVE_CREDIT, config.SLEEVE_REAL, config.SLEEVE_ALTS, config.SLEEVE_CRYPTO]).astype(float)
+    if not m_ix.any():
+        pol["min_index"] = 0.0
     cons += [{"type": "ineq", "fun": lambda w: pol["max_single_stocks"] - m_st @ w},
              {"type": "ineq", "fun": lambda w: m_ix @ w - pol["min_index"]},
-             {"type": "ineq", "fun": lambda w: m_bd @ w - pol["min_bonds"]},
-             {"type": "ineq", "fun": lambda w: pol["max_diversifiers"] - m_dv @ w}]
+             {"type": "ineq", "fun": lambda w: m_bd @ w - pol["min_bonds"]}]
+    for sname, cap in pol.get("sleeve_caps", {}).items():
+        m = (sl == sname).astype(float)
+        if m.any():
+            cons.append({"type": "ineq", "fun": lambda w, m=m, cap=cap: cap - m @ w})
     scen = {}
     for name, row in (stress or {}).items():
         vec = np.array([row.get(t, 0.0) for t in tickers])
@@ -241,7 +249,11 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
         w = np.zeros(len(tickers))
         w[:n_s] = stock_share / max(n_s, 1)
         ix = [i for i, t in enumerate(tickers) if t in ("VOO", "QQQ")] or [i for i in range(len(tickers)) if m_ix[i]]
-        w[ix] = (1 - stock_share - pol["min_bonds"]) / max(len(ix), 1)
+        if ix:
+            w[ix] = (1 - stock_share - pol["min_bonds"]) / len(ix)
+        else:
+            stock_share = 0.0
+            w[:n_s] = 0.0
         cash_j = tickers.index(config.CASH_PROXY) if config.CASH_PROXY in tickers else None
         if cash_j is not None:
             w[cash_j] += pol["min_bonds"]
@@ -277,8 +289,7 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     info["mu"] = dict(zip(tickers, mu))
     info["stock_share"] = float(wv[:n_s].sum())
     info["defensive_share"] = float(wv[n_s:].sum())
-    info["sleeves"] = {name: float(m @ wv) for name, m in [(config.SLEEVE_INDEX, m_ix), (config.SLEEVE_STOCKS, m_st),
-                                                           (config.SLEEVE_BONDS, m_bd), (config.SLEEVE_DIVERS, m_dv)]}
+    info["sleeves"] = {name: float((sl == name).astype(float) @ wv) for name in config.SLEEVES}
     info["policy"] = pol
     info["stress_returns"] = {k: float(v @ wv) for k, v in scen.items()}
     binding = []

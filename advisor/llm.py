@@ -213,3 +213,42 @@ def ask(question: str, packet: dict, history: list[dict]) -> str:
     convo = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in history[-6:])
     return chat(QA_SYSTEM, f"DATA PACKET:\n{json.dumps(packet, default=str)}\n\nCONVERSATION SO FAR:\n{convo}\n\nQUESTION: {question}",
                 max_tokens=3000)
+
+
+# ---------------------------------------------------------------- 6. private banker KYC follow ups
+KYC_Q_SYSTEM = """You are a senior private banker at a top private bank in a Know Your Client meeting. You have the client's
+questionnaire answers and a rules based risk score (willingness vs ability to take risk). Spot gaps, contradictions and
+anything that changes how the money should be invested (liquidity, concentration, tax residence, currency, behaviour in a
+crash). Return ONLY JSON: {"observations": "2 sentences on what stands out", "questions": ["2 to 4 short, warm, specific
+questions"]}. Plain English, no jargon, no hyphens or dashes as punctuation."""
+
+KYC_F_SYSTEM = """You are a senior private banker finishing a Know Your Client meeting. Using the questionnaire, the rules
+based risk score and the client's answers to your follow up questions, set the final risk profile. Return ONLY JSON:
+{"risk_tolerance": integer 1 to 10 (within 2 points of the rules based score; when willingness and ability differ, lean to
+the lower), "max_drawdown": decimal loss the client can truly sit through, "options_ok": true or false,
+"objective": "one sentence in the client's terms", "summary": "2 sentences describing the client",
+"rationale": "2 sentences explaining the risk score in plain English"}. No hyphens or dashes as punctuation."""
+
+
+def kyc_followups(answers: dict, sc: dict) -> dict:
+    data = json.dumps({"answers": answers, "rules_based_score": sc}, default=str)
+    return parse_json(chat(KYC_Q_SYSTEM, data, max_tokens=3000, json_mode=True))
+
+
+def kyc_finalise(answers: dict, sc: dict, qa: list[dict]) -> dict:
+    data = json.dumps({"answers": answers, "rules_based_score": sc, "follow_ups": qa}, default=str)
+    return parse_json(chat(KYC_F_SYSTEM, data, max_tokens=3000, json_mode=True))
+
+
+# ---------------------------------------------------------------- 7. market briefing in plain English
+MKT_SYSTEM = """You are a private banker explaining today's markets to a client with no finance background. You get market
+readings already computed from Yahoo Finance and FRED, and the conclusions drawn from them. Return ONLY JSON:
+{"big_picture": "3 short sentences: what is going on in markets right now and what it means for this client",
+ "sections": {"<section title>": "1 to 2 plain sentences"}}. Use ONLY the numbers given, copied exactly. Use everyday words,
+short sentences, no hyphens or dashes as punctuation."""
+
+
+def market_story(readings: dict, conclusions: list[dict], profile: dict) -> dict:
+    data = json.dumps({"client": {k: profile.get(k) for k in ("client_name", "objective", "risk_tolerance", "base_currency")},
+                       "readings": readings, "conclusions": conclusions}, default=str)
+    return parse_json(chat(MKT_SYSTEM, data, max_tokens=4000, json_mode=True))

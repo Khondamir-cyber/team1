@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from . import analytics as A
-from . import config, data, llm, report
+from . import config, data, hedging, llm, markets, report
 
 BUCKET_TO_THEMES = {
     "AI semiconductors": ["Artificial intelligence"],
@@ -31,7 +31,23 @@ def load_market_data(progress=lambda m: None) -> dict:
     progress("Pulling recent company news")
     news = data.get_news([t for t in config.STOCKS if t in px.columns])
     analyst = data.get_analyst_trends([t for t in config.STOCKS if t in px.columns])
-    return {"px": px, "fund": fund, "macro": macro, "news": news, "analyst": analyst, "sources": dict(data.SOURCE_LOG)}
+    progress("Pulling global indices, yields, currencies, commodities and crypto for the market briefing")
+    mk = markets.load_briefing_data()
+    return {"px": px, "fund": fund, "macro": macro, "news": news, "analyst": analyst, "mk": mk, "sources": dict(data.SOURCE_LOG)}
+
+
+def market_brief(md: dict, prof: dict, use_ai: bool = True) -> dict:
+    snap = data.macro_snapshot(md["macro"])
+    overlay = A.macro_overlay(snap, prof)
+    r = markets.readings(md.get("mk"), md["macro"])
+    concl = markets.conclusions(r, prof, overlay["notes"])
+    out = {"readings": r, "conclusions": concl, "notes": markets.plain_notes(r), "story": None, "macro": snap}
+    if use_ai and llm.available():
+        try:
+            out["story"] = llm.market_story(r, concl, prof)
+        except Exception as e:
+            out["error"] = f"AI market briefing unavailable, rules based notes shown: {e}"
+    return out
 
 
 def _exclude(feat: pd.DataFrame, prof: dict) -> dict:
@@ -100,6 +116,7 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
     excluded = _exclude(feat, prof)
     eligible = [t for t in comp.index if t not in excluded]
     res.update(features=feat, z=z, factor_weights=weights, overlay=overlay, composite=comp, excluded=excluded, cash=overlay["cash"])
+    res["conclusions"] = markets.conclusions(markets.readings(md.get("mk"), md["macro"]), prof, overlay["notes"])
 
     # ---- select and optimise
     progress("Optimising position sizes under the client's risk limits")
@@ -110,7 +127,8 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
         stress = A.scenario_matrix(selection + list(config.DEFENSIVE), px, bench)
         return A.optimise(selection, comp, rets, prof, overlay["cash"], rf, overlay["vol_mult"], caps, stress)
 
-    selection = eligible[:n]
+    stocks_ok = "single_stocks" in (prof.get("allowed_assets") or config.DEFAULT_ALLOWED)
+    selection = eligible[:n] if stocks_ok else []
     w, info = build(selection)
     _risk(res, w, info, px, rets, prof, bench, rf)
 
@@ -135,7 +153,7 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
             if removed or caps:
                 progress("Applying the committee's changes and re-optimising")
                 pool = [t for t in eligible if t not in removed]
-                selection = pool[:n]
+                selection = pool[:n] if stocks_ok else []
                 w, info = build(selection)
                 _risk(res, w, info, px, rets, prof, bench, rf)
         except Exception as e:
@@ -163,6 +181,15 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
     res["packet"] = packet
     res["verification"] = report.verify_decision(decision, packet)
     res["trades"] = A.trade_list(w, pm["price"], 0.0, config.INVESTMENT_AMOUNT, prof.get("fractional_shares", True))
+    progress("Pricing the hedges: index options and currency")
+    try:
+        res["option_hedge"] = hedging.option_hedge(w, rets, px, prof, rf, snap.get("VIXCLS"))
+    except Exception as e:
+        res["option_hedge"] = None
+        res["errors"].append(f"Option hedge could not be priced: {e}")
+    rd = markets.readings(md.get("mk"), md["macro"])
+    res["fx_hedge"] = hedging.fx_hedge(w, prof, rd.get("gbpusd_level"), rd.get("us_3m_pct"), snap.get("IR3TIB01GBM156N"))
+    res["packet"] = report.build_packet(res)
 
     progress("Running the walk forward test (quarterly rebalances using only past data)")
     try:

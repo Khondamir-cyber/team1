@@ -10,7 +10,7 @@ import plotly.express as px_
 import plotly.graph_objects as go
 import streamlit as st
 
-from advisor import config, llm, pipeline, report
+from advisor import config, kyc, llm, pipeline, report
 
 st.set_page_config(page_title="Velocity | AI Growth Analyst", page_icon="📈", layout="wide")
 
@@ -80,82 +80,249 @@ with st.sidebar:
     st.divider()
     st.caption("Educational hackathon project. Not financial advice.")
 
-st.markdown("""<div class="hero"><h1>Velocity · the AI growth analyst</h1>
-<p>Turns a client's own words into a <b>$100,000</b> growth portfolio: live public data, quant scoring, an
-<b>AI investment committee</b> that debates the picks, and every number in the explanation <b>traced back to source data</b>.</p></div>""",
+st.markdown("""<div class="hero"><h1>Velocity · your AI private banker</h1>
+<p>Know the client first. Read the markets. Show the evidence. Then build a hedged, multi asset portfolio for
+<b>$100,000</b>, debated by an <b>AI investment committee</b> with every number <b>traced back to source data</b>.</p></div>""",
             unsafe_allow_html=True)
 
-# ------------------------------------------------------------------ 01 client
-st.subheader("01 · The client")
-c1, c2 = st.columns([1.05, 1])
-with c1:
-    ss.profile_text = st.text_area("In the client's own words", ss.profile_text, height=190)
-    if st.button("🧠 Read the brief with AI", width="stretch", disabled=not llm.available()):
-        with st.spinner("Turning the brief into an investment policy..."):
-            try:
-                ss.profile = llm.parse_profile(ss.profile_text)
-                ss.pop("res", None)
-            except Exception as e:
-                st.error(f"Could not parse the brief: {e}")
-    if not llm.available():
-        st.caption("Add an Azure OpenAI key in the sidebar to parse free text; defaults below are used meanwhile.")
-with c2:
-    p = ss.profile
-    st.markdown(f"**{p['client_name']}** · high growth investor")
-    st.markdown(f"*{p['objective']}*")
-    k1, k2, k3, k4 = st.columns(4)
-    kpi(k1, "Horizon", f"{p['horizon_years']}y")
-    kpi(k2, "Risk tolerance", f"{p['risk_tolerance']}/10")
-    kpi(k3, "Max drawdown", pct(p["max_drawdown"], 0))
-    kpi(k4, "Max position", pct(p["max_position"], 0))
-    st.markdown(" ".join(f'<span class="pill">{t}</span>' for t in p["themes"]) +
-                "".join(f'<span class="pill bad">no {x}</span>' for x in p.get("exclude_tickers", []) + p.get("exclude_sectors", [])),
-                unsafe_allow_html=True)
-    if p.get("assumptions"):
-        st.caption("Assumed: " + "; ".join(map(str, p["assumptions"])))
-    with st.expander("Adjust the investment policy"):
-        a1, a2 = st.columns(2)
-        p["horizon_years"] = a1.slider("Horizon (years)", 1, 30, int(p["horizon_years"]))
-        p["risk_tolerance"] = a2.slider("Risk tolerance", 1, 10, int(p["risk_tolerance"]))
-        p["max_drawdown"] = a1.slider("Max drawdown the client accepts", 0.10, 0.60, float(p["max_drawdown"]), 0.01)
-        p["target_vol"] = config.target_vol_for(p["risk_tolerance"], p["max_drawdown"])
-        a2.metric("Volatility ceiling (set from risk tolerance and drawdown)", pct(p["target_vol"]))
-        p["max_position"] = a1.slider("Max single position", 0.05, 0.30, float(p["max_position"]), 0.01)
-        p["n_holdings"] = a2.slider("Number of stocks", 6, 20, int(p["n_holdings"]))
-        p["cash_buffer"] = a1.slider("Minimum T bill holding", 0.0, 0.15, float(p["cash_buffer"]), 0.01)
-        pol = config.strategic_policy(p["risk_tolerance"])
-        st.markdown("**Strategic allocation (core and satellite)**, set from risk tolerance:")
-        if st.checkbox("Customise sleeve limits", value=bool(p.get("policy"))):
-            b1, b2, b3 = st.columns(3)
-            p["policy"] = {
-                "min_bonds": b1.slider("Government bonds and cash, at least", 0.0, 0.8, float((p.get("policy") or pol)["min_bonds"]), 0.01),
-                "min_index": b2.slider("Index funds, at least", 0.0, 0.8, float((p.get("policy") or pol)["min_index"]), 0.01),
-                "max_single_stocks": b3.slider("Single stocks, at most", 0.0, 0.8, float((p.get("policy") or pol)["max_single_stocks"]), 0.01),
-                "max_diversifiers": pol["max_diversifiers"]}
-        else:
-            p["policy"] = None
-            st.caption(f"Government bonds and cash at least {pct(pol['min_bonds'], 0)} · index funds at least {pct(pol['min_index'], 0)} · "
-                       f"single stocks at most {pct(pol['max_single_stocks'], 0)} · gold and min volatility at most {pct(pol['max_diversifiers'], 0)}")
-        p["benchmark"] = a2.selectbox("Benchmark", ["QQQ", "SPY"], index=0 if p["benchmark"] == "QQQ" else 1)
-        p["themes"] = st.multiselect("Themes", list(config.THEMES), default=p["themes"])
-        p["exclude_tickers"] = [t.strip().upper() for t in st.text_input("Exclude tickers (comma separated)", ", ".join(p["exclude_tickers"])).split(",") if t.strip()]
-        p["fractional_shares"] = st.checkbox("Fractional shares", value=p.get("fractional_shares", True))
+STEPS = ["1 · Know your client", "2 · The markets today", "3 · What the data tells us", "4 · Your portfolio"]
+ss.setdefault("step", 1)
+ss.setdefault("answers", dict(kyc.DEFAULT_ANSWERS))
+nav = st.columns(4)
+for i, lab in enumerate(STEPS, start=1):
+    done = i < ss.step
+    nav[i - 1].markdown(f'<div class="kpi" style="opacity:{1 if i <= ss.step else .45}; border-left-color:{YELLOW if i == ss.step else PURPLE}">'
+                        f'<div class="l">{"✓ " if done else ""}{lab}</div></div>', unsafe_allow_html=True)
+st.write("")
 
-if st.button("🚀 Build the $100,000 portfolio", type="primary", width="stretch"):
-    with st.status("Running the analyst...", expanded=True) as status:
-        try:
-            if "md" not in ss:
-                ss.md = pipeline.load_market_data(progress=lambda m: status.write(f"▸ {m}"))
-            ss.res = pipeline.run(ss.md, dict(ss.profile), use_ai=use_ai, progress=lambda m: status.write(f"▸ {m}"))
-            ss.chat = []
-            status.update(label="Recommendation ready", state="complete", expanded=False)
-        except Exception as e:
-            status.update(label="Run failed", state="error")
-            st.exception(e)
 
-if "res" not in ss:
-    st.info("Describe the client, then build the portfolio. First run pulls about 7 years of data for 40 tickers (about a minute); later runs use the cache.")
+def goto(n):
+    ss.step = n
+    st.rerun()
+
+
+def ensure_data(status):
+    if "md" not in ss:
+        ss.md = pipeline.load_market_data(progress=lambda m: status.write(f"▸ {m}"))
+
+
+# ------------------------------------------------------------------ STEP 1: KYC
+if ss.step == 1:
+    a = ss.answers
+    st.subheader("Know your client")
+    st.caption("A private banker never starts with products. These questions cover goals, money needs, wealth, behaviour in a crash and preferences.")
+    with st.form("kyc"):
+        st.markdown("##### About you")
+        c = st.columns(4)
+        a["name"] = c[0].text_input("Name", a["name"])
+        a["age"] = c[1].number_input("Age", 18, 100, int(a["age"]))
+        a["occupation"] = c[2].text_input("Occupation", a["occupation"])
+        a["residence"] = c[3].selectbox("Tax residence", ["United Kingdom", "United States", "European Union", "Other"],
+                                        index=["United Kingdom", "United States", "European Union", "Other"].index(a["residence"]))
+        c = st.columns(4)
+        a["base_currency"] = c[0].radio("You spend and measure wealth in", ["GBP", "USD"], index=0 if a["base_currency"] == "GBP" else 1, horizontal=True)
+        a["dependants"] = c[1].selectbox("Dependants", ["None", "Partner", "Children", "Partner and children"],
+                                         index=["None", "Partner", "Children", "Partner and children"].index(a["dependants"]))
+        st.markdown("##### Your goals")
+        c = st.columns([1.2, 1, 1.4])
+        a["objective"] = c[0].selectbox("Main objective for this money", kyc.OBJECTIVES, index=kyc.OBJECTIVES.index(a["objective"]))
+        a["horizon_years"] = c[1].slider("Years until you need most of it", 1, 30, int(a["horizon_years"]))
+        a["goal_text"] = c[2].text_input("What is the money ultimately for?", a["goal_text"])
+        c = st.columns(3)
+        a["withdrawals"] = c[0].selectbox("Withdrawals", ["No withdrawals planned", "Occasional lump sums", "Regular income needed"],
+                                          index=["No withdrawals planned", "Occasional lump sums", "Regular income needed"].index(a["withdrawals"]))
+        a["income_pct"] = c[1].slider("If regular income: % a year", 0.0, 0.08, float(a["income_pct"]), 0.005)
+        a["liquidity_2y"] = c[2].number_input("Amount you may need within 2 years ($)", 0, 100000, int(a["liquidity_2y"]), 1000)
+        st.markdown("##### Your financial situation")
+        c = st.columns(4)
+        a["wealth_share"] = c[0].selectbox("This $100k as a share of your total wealth", list(kyc.WEALTH_SHARE), index=list(kyc.WEALTH_SHARE).index(a["wealth_share"]))
+        a["emergency_fund"] = c[1].selectbox("Emergency savings outside this money", ["Yes, 6 months or more", "Yes, under 6 months", "No"],
+                                             index=["Yes, 6 months or more", "Yes, under 6 months", "No"].index(a["emergency_fund"]))
+        a["income_stability"] = c[2].selectbox("Income", ["Stable salary", "Variable or self employed", "Retired"],
+                                               index=["Stable salary", "Variable or self employed", "Retired"].index(a["income_stability"]))
+        a["concentrated"] = c[3].radio("Hold a large position in one company (e.g. employer shares)?", ["Yes", "No"],
+                                       index=0 if a["concentrated"] == "Yes" else 1, horizontal=True)
+        c = st.columns(4)
+        a["concentrated_ticker"] = c[0].text_input("Which company (ticker)?", a["concentrated_ticker"])
+        a["concentrated_value"] = c[1].number_input("Roughly worth ($)", 0, 10_000_000, int(a["concentrated_value"]), 5000)
+        st.markdown("##### You and risk")
+        c = st.columns(4)
+        a["risk_words"] = c[0].select_slider("How would you describe yourself as an investor?", list(kyc.RISK_WORDS), value=a["risk_words"])
+        a["reaction"] = c[1].selectbox("Your portfolio falls 20% in a month. You...", list(kyc.REACTION), index=list(kyc.REACTION).index(a["reaction"]))
+        a["max_loss"] = c[2].slider("Largest fall you could live with before losing sleep", 0.05, 0.60, float(a["max_loss"]), 0.01, format="%.2f")
+        a["experience"] = c[3].selectbox("Investing experience", list(kyc.EXPERIENCE), index=list(kyc.EXPERIENCE).index(a["experience"]))
+        a["options_knowledge"] = st.radio("Have you used options (puts, calls) before?", ["Yes", "A little", "No"],
+                                          index=["Yes", "A little", "No"].index(a["options_knowledge"]), horizontal=True)
+        st.markdown("##### Your preferences")
+        c = st.columns(2)
+        a["themes"] = c[0].multiselect("Themes you believe in", list(config.THEMES), default=a["themes"])
+        a["exclusions"] = c[1].multiselect("Never invest in", list(kyc.EXCLUSIONS), default=a["exclusions"])
+        a["allowed_assets"] = st.multiselect("Assets you are comfortable with (government bonds and cash are always allowed)",
+                                             list(config.ASSET_CLASSES), default=a["allowed_assets"], format_func=lambda k: config.ASSET_CLASSES[k])
+        c = st.columns([1, 2])
+        a["esg"] = c[0].selectbox("Sustainability (ESG)", ["Not important", "Somewhat important", "Very important"],
+                                  index=["Not important", "Somewhat important", "Very important"].index(a["esg"]))
+        a["notes"] = c[1].text_input("Anything else your banker should know?", a["notes"])
+        submitted = st.form_submit_button("Review my answers", type="primary", width="stretch")
+    if a["esg"] == "Very important" and "Fossil fuels" not in a["exclusions"]:
+        a["exclusions"] = a["exclusions"] + ["Fossil fuels"]
+    if submitted:
+        ss.score = kyc.score(a)
+        ss.followups = None
+        if llm.available():
+            with st.spinner("Your banker is reading your answers..."):
+                try:
+                    ss.followups = llm.kyc_followups(a, ss.score)
+                except Exception as e:
+                    st.warning(f"AI banker unavailable, using standard follow ups: {e}")
+        if not ss.followups:
+            ss.followups = {"observations": " ".join(ss.score["contradictions"] + ss.score["capacity_notes"]) or "Your answers are consistent.",
+                            "questions": kyc.fallback_questions(a, ss.score)}
+    if ss.get("score"):
+        sc = ss.score
+        st.markdown("#### Your risk profile so far")
+        c = st.columns([1, 1.3])
+        with c[0]:
+            fig = go.Figure(go.Bar(x=[sc["willingness"], sc["ability"]], y=["Willingness to take risk", "Ability to take risk"],
+                                   orientation="h", marker_color=[PURPLE, YELLOW], text=[f"{sc['willingness']}/10", f"{sc['ability']}/10"]))
+            fig.update_layout(height=200, xaxis_range=[0, 10], margin=dict(t=10, b=10))
+            st.plotly_chart(fig, width="stretch")
+            st.caption(f"We invest at the lower of the two: **risk score {sc['risk_tolerance']}/10** before follow ups.")
+        with c[1]:
+            st.markdown(f"**🎩 Your banker:** {esc(ss.followups.get('observations', ''))}")
+            qa = []
+            for i, q in enumerate(ss.followups.get("questions", [])):
+                ans = st.text_input(q, key=f"fu_{i}")
+                qa.append({"question": q, "answer": ans})
+        if st.button("Confirm my profile", type="primary", width="stretch"):
+            final = None
+            if llm.available():
+                with st.spinner("Setting your final risk profile..."):
+                    try:
+                        final = llm.kyc_finalise(a, sc, qa)
+                    except Exception as e:
+                        st.warning(f"AI unavailable, rules based profile used: {e}")
+            ss.profile = kyc.build_profile(a, sc, final)
+            ss.pop("res", None)
+            ss.pop("brief", None)
+        if ss.get("profile", {}).get("kyc") is not None:
+            p = ss.profile
+            st.success(f"**{p['client_name']}: risk score {p['risk_tolerance']}/10, max acceptable fall {pct(p['max_drawdown'], 0)}, "
+                       f"volatility ceiling {pct(p['target_vol'])}.** {esc(p.get('risk_rationale', ''))}")
+            pol = config.strategic_policy(p["risk_tolerance"])
+            st.caption(f"Policy: government bonds and cash at least {pct(pol['min_bonds'], 0)}, index funds at least {pct(pol['min_index'], 0)}, "
+                       f"single stocks at most {pct(pol['max_single_stocks'], 0)}, at least {pct(p['cash_buffer'], 0)} in T bills for liquidity"
+                       + (f", no {', '.join(p['exclude_tickers'])} (already held)" if p["exclude_tickers"] else "") + ".")
+            if st.button("Next: the markets today →", type="primary", width="stretch"):
+                with st.status("Pulling live market data...", expanded=True) as status:
+                    try:
+                        ensure_data(status)
+                        ss.brief = pipeline.market_brief(ss.md, ss.profile, use_ai)
+                        status.update(label="Market data ready", state="complete")
+                    except Exception as e:
+                        status.update(label="Data load failed", state="error")
+                        st.exception(e)
+                        st.stop()
+                goto(2)
     st.stop()
+
+# ------------------------------------------------------------------ STEP 2: markets
+if ss.step == 2:
+    b, mk, macro = ss.brief, ss.md.get("mk"), ss.md["macro"]
+    r, story = b["readings"], b.get("story") or {}
+    if b.get("error"):
+        st.warning(b["error"])
+    st.subheader("The markets today")
+    if story.get("big_picture"):
+        st.markdown(f'<div class="headline">{esc(story["big_picture"])}</div>', unsafe_allow_html=True)
+    notes = {**b["notes"], **(story.get("sections") or {})}
+
+    def last_year(df, cols, rebase=False):
+        cols = [c for c in cols if df is not None and c in df]
+        if not cols:
+            return None
+        x = df[cols].loc[df.index >= df.index.max() - pd.Timedelta(days=365)].ffill().dropna(how="all")
+        if rebase:
+            x = x / x.bfill().iloc[0] * 100
+        return x.rename(columns=config.MARKET_TICKERS)
+
+    def section(title, df, ytitle, note_key=None, fmt=None):
+        st.markdown(f"#### {title}")
+        cc = st.columns([1.6, 1])
+        if df is not None and not df.empty:
+            fig = px_.line(df, color_discrete_sequence=[PURPLE, YELLOW, "#1f6f9d", RED, GREEN, GREY])
+            fig.update_layout(height=290, margin=dict(t=10, b=10), legend_title="", yaxis_title=ytitle, xaxis_title="")
+            cc[0].plotly_chart(fig, width="stretch")
+        else:
+            cc[0].info("Data unavailable right now.")
+        cc[1].markdown(esc(notes.get(note_key or title, "")))
+        return cc[1]
+
+    side = section("Interest rates and inflation", last_year(mk, ["^IRX", "^TNX", "^TYX"]), "Yield, %")
+    if macro is not None and "CPIAUCSL" in macro:
+        cpi = (macro["CPIAUCSL"].dropna().pct_change(12) * 100).dropna().iloc[-36:]
+        if len(cpi):
+            side.plotly_chart(px_.line(cpi, color_discrete_sequence=[RED]).update_layout(
+                height=160, margin=dict(t=25, b=5), showlegend=False, title="US inflation, % a year (FRED)", yaxis_title="", xaxis_title=""), width="stretch")
+    if macro is not None and "UNRATE" in macro:
+        section("Jobs", macro[["UNRATE"]].dropna().iloc[-36:].rename(columns={"UNRATE": "US unemployment rate (FRED)"}), "%")
+    side = section("Stock markets", last_year(mk, ["^GSPC", "^NDX", "^FTSE", "^STOXX50E", "^N225", "EEM"], rebase=True), "Rebased to 100")
+    vx = last_year(mk, ["^VIX"])
+    if vx is not None:
+        side.plotly_chart(px_.line(vx, color_discrete_sequence=[RED]).update_layout(
+            height=160, margin=dict(t=25, b=5), showlegend=False, title="VIX fear gauge", yaxis_title="", xaxis_title=""), width="stretch")
+    side = section("Bonds and credit", last_year(mk, ["IEF", "LQD", "HYG"], rebase=True), "Rebased to 100")
+    if macro is not None and "BAMLH0A0HYM2" in macro:
+        hy = macro["BAMLH0A0HYM2"].dropna().iloc[-500:]
+        side.plotly_chart(px_.line(hy, color_discrete_sequence=[RED]).update_layout(
+            height=160, margin=dict(t=25, b=5), showlegend=False, title="High yield spread, % (FRED)", yaxis_title="", xaxis_title=""), width="stretch")
+    section("Currencies", last_year(mk, ["GBPUSD=X", "EURUSD=X"]), "Dollars per unit")
+    section("Commodities", last_year(mk, ["GC=F", "BZ=F"], rebase=True), "Rebased to 100")
+    if "crypto" in (ss.profile.get("allowed_assets") or []):
+        section("Crypto", last_year(mk, ["BTC-USD"]), "US$")
+    c = st.columns(2)
+    if c[0].button("← Back to the questionnaire", width="stretch"):
+        goto(1)
+    if c[1].button("Next: what the data tells us →", type="primary", width="stretch"):
+        goto(3)
+    st.stop()
+
+# ------------------------------------------------------------------ STEP 3: conclusions
+if ss.step == 3:
+    b = ss.brief
+    st.subheader("What the data tells us, and what we will do about it")
+    st.caption("Every conclusion is tied to a specific public data point. These rules feed straight into the portfolio construction.")
+    for row in b["conclusions"]:
+        with st.container(border=True):
+            cc = st.columns([1.3, 1, 2, 2])
+            cc[0].markdown(f"**{row['Data point']}**  \n<span class='pill'>{row['Source']}</span>", unsafe_allow_html=True)
+            cc[1].markdown(f"### {esc(row['Reading'])}" if row["Reading"] else "")
+            cc[2].markdown(f"**Means:** {esc(row['What it means'])}")
+            cc[3].markdown(f"**We will:** {esc(row['What we do'])}")
+    with st.expander("Every number used (raw readings)"):
+        st.json(b["readings"], expanded=False)
+    c = st.columns(2)
+    if c[0].button("← Back to the markets", width="stretch"):
+        goto(2)
+    if c[1].button("🚀 Build my portfolio", type="primary", width="stretch"):
+        with st.status("Your banker and the AI committee are at work...", expanded=True) as status:
+            try:
+                ensure_data(status)
+                ss.res = pipeline.run(ss.md, dict(ss.profile), use_ai=use_ai, progress=lambda m: status.write(f"▸ {m}"))
+                ss.chat = []
+                status.update(label="Portfolio ready", state="complete", expanded=False)
+            except Exception as e:
+                status.update(label="Run failed", state="error")
+                st.exception(e)
+                st.stop()
+        goto(4)
+    st.stop()
+
+# ------------------------------------------------------------------ STEP 4: portfolio
+if "res" not in ss:
+    goto(3)
+if st.button("← Back to the evidence"):
+    goto(3)
 
 res = ss.res
 prof = res["profile"]
@@ -165,7 +332,7 @@ feat = res["features"]
 for e in res["errors"]:
     st.warning(e)
 
-tabs = st.tabs(["04 · Recommendation", "03 · How the AI decided", "Risk check", "02 · The data", "💬 Ask the analyst"])
+tabs = st.tabs(["Your portfolio", "How the AI decided", "Risk check", "Data", "💬 Ask your banker"])
 
 # ------------------------------------------------------------------ recommendation
 with tabs[0]:
@@ -221,6 +388,39 @@ with tabs[0]:
         if items:
             st.markdown(f"**{sname}, {pct(sum(v for _, v in items))}:** " + ", ".join(
                 f"{t} ({config.ETFS[t][0]}) {pct(v)}" for t, v in items) + f". Why: {reason}.")
+    oh, fx = res.get("option_hedge"), res.get("fx_hedge")
+    if oh or fx:
+        st.markdown("#### 🛡️ Hedges")
+    if oh:
+        with st.container(border=True):
+            hc = st.columns([1, 1.3])
+            with hc[0]:
+                desc = (f"Buy {oh['contracts']} {oh['underlying']} put{'s' if oh['contracts'] > 1 else ''} at strike {oh['put_strike']:.0f}"
+                        + (f", sell {oh['contracts']} call{'s' if oh['contracts'] > 1 else ''} at {oh['call_strike']:.0f}" if oh["call_strike"] else "")
+                        + f", expiring {oh['expiry']}.")
+                st.markdown(f"**{oh['style']} on the equity exposure.** {desc}")
+                q = st.columns(2)
+                kpi(q[0], "Net cost (from T bills)", f"${oh['net_cost']:,.0f} ({pct(oh['net_cost_pct'], 2)})")
+                kpi(q[1], "Protection starts", pct(oh["protection_from"], 0, sign=True))
+                q = st.columns(2)
+                lw = oh["loss_at_minus_30"]
+                kpi(q[0], f"If {oh['underlying']} falls 30%: loss without", f"${-lw['without']:,.0f}")
+                kpi(q[1], "with the hedge", f"${-lw['with']:,.0f}")
+                st.caption(f"Priced from: {oh['source']}. Equity beta to {oh['underlying']}: {oh['beta']:.2f}. "
+                           + (f"Upside given up above {pct(oh['cap_at'], 0, sign=True)}. " if oh.get("cap_at") is not None else "")
+                           + "Options trade in 100 share contracts, so the hedge ratio is " + pct(oh["hedge_ratio"], 0) + ".")
+            with hc[1]:
+                pf = oh["payoff"].set_index("move")
+                fig = px_.line(pf, color_discrete_sequence=[GREY, PURPLE])
+                fig.update_layout(height=300, margin=dict(t=10, b=10), xaxis_tickformat=".0%", yaxis_tickprefix="$",
+                                  xaxis_title=f"{oh['underlying']} move by expiry", yaxis_title="Equity P&L", legend_title="")
+                st.plotly_chart(fig, width="stretch")
+    if fx:
+        with st.container(border=True):
+            st.markdown(f"**Currency hedge (you think in pounds).** Sell \\${fx['usd_to_hedge']:,.0f} forward against GBP for 3 months "
+                        f"(about £{fx['gbp_equivalent']:,.0f}); spot GBP/USD {fx['spot']:.4f}"
+                        + (f", 3 month forward about {fx['forward_3m']:.4f}" if fx.get("forward_3m") else "")
+                        + f". Hedged: 100% of bonds, {pct(fx['equity_ratio'], 0)} of equities. {fx['why']}")
     if res["removed_by_committee"] or res["caps_by_committee"]:
         chg = [f"removed **{t}** ({r})" for t, r in res["removed_by_committee"].items()] + \
               [f"capped **{t}** at {pct(c, 0)}" for t, c in res["caps_by_committee"].items()]

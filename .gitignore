@@ -190,3 +190,6 @@ pyrightconfig.json
 .ionide
 
 .venv
+# app caches
+data_cache/
+data_cache_test/

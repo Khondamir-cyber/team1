@@ -172,9 +172,16 @@ Return ONLY a JSON object:
  "suitability": "2 sentences checking it against the client's drawdown limit, horizon and exclusions, citing the stress test",
  "adjustments": [{"ticker": "...", "action": "remove" or "cap", "max_weight": decimal or null, "reason": "..."}],
  "holdings": [{"ticker": "...", "role": "Core compounder | Growth engine | Diversifier | Satellite",
-               "why": "2 sentences citing at least two numbers from the packet", "key_risk": "1 sentence",
+               "why": "2 plain sentences a non expert understands, citing at least two numbers from the packet", "key_risk": "1 sentence",
                "sell_trigger": "1 measurable condition that would make us sell"}],
- "key_risks": ["3 portfolio level risks"],
+ "key_risks": ["3 portfolio level risks, in plain words"],
+ "letter": "A note from you, the client's private banker, written in the first person to the client by first name, 170 to 230
+            words, warm and plain like a conversation across the desk. Cover in order: what you heard from them in the meeting
+            (their goal, their worry); what you decided and why, part by part (index funds, chosen companies, government bonds
+            and cash, anything else held, the hedges) and what each part does FOR THEM; what a bad year could look like using
+            ONE stress test number from the packet, and why you are comfortable with it; what you will watch and when you would
+            change course. No jargon: never say volatility, beta, optimiser, z score, factor, packet, sleeve or constraint.
+            Round numbers simply (say about 19%, not 19.43%).",
  "dissent": "1 to 2 sentences on where the Risk Officer disagreed and how you resolved it"
 }
 Context: the optimiser already enforces the client's limits as hard constraints (single stock cap, volatility ceiling,

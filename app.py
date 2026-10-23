@@ -332,7 +332,7 @@ feat = res["features"]
 for e in res["errors"]:
     st.warning(e)
 
-tabs = st.tabs(["Your portfolio", "How the AI decided", "Risk check", "Data", "💬 Ask your banker"])
+tabs = st.tabs(["Your portfolio", "How the AI decided", "Risk check", "How every number is made", "Data", "💬 Ask your banker"])
 
 # ------------------------------------------------------------------ recommendation
 with tabs[0]:
@@ -343,7 +343,7 @@ with tabs[0]:
     k = st.columns(6)
     sv = res["opt_info"]["sleeves"]
     kpi(k[0], "Index · stocks · bonds", f"{sv[config.SLEEVE_INDEX] * 100:.0f} · {sv[config.SLEEVE_STOCKS] * 100:.0f} · {sv[config.SLEEVE_BONDS] * 100:.0f}%")
-    kpi(k[1], "Model expected return", pct(res["opt_info"]["exp_return"]))
+    kpi(k[1], "Expected return a year (assumption)", pct(res["opt_info"]["exp_return"]))
     kpi(k[2], "Expected volatility", pct(res["opt_info"]["exp_vol"]))
     worst = res["stress"]["Portfolio"].min() if len(res["stress"]) else np.nan
     kpi(k[3], "Worst historical stress", pct(worst))
@@ -368,26 +368,42 @@ with tabs[0]:
         show["Shares"] = show["Shares"].map(lambda x: "" if pd.isna(x) else f"{x:,.3f}")
         st.dataframe(show, hide_index=True, width="stretch", height=420)
 
-    st.markdown("#### Why this portfolio")
-    st.markdown(esc(d.get("portfolio_thesis", "")))
-    st.markdown(f"**Suitability check.** {esc(d.get('suitability', ''))}")
-    oi = res["opt_info"]
-    lim = (f"Hard limits enforced by the optimiser: max {pct(prof['max_position'], 0)} per stock, volatility at most "
-           f"{pct(oi['target_vol'])}, a loss smaller than {pct(prof['max_drawdown'], 0)} in every historical stress replay, "
-           f"government bonds and cash at least {pct(oi['policy']['min_bonds'], 0)}, index funds at least {pct(oi['policy']['min_index'], 0)}, "
-           f"single stocks at most {pct(oi['policy']['max_single_stocks'], 0)}.")
-    if oi.get("binding"):
-        lim += " The limits that shaped this portfolio: " + "; ".join(oi["binding"]) + "."
-    st.info(lim)
-    dw = res["defensive_weights"]
-    why_sleeve = {config.SLEEVE_INDEX: "broad, cheap market growth so the outcome never rests on a handful of stocks",
-                  config.SLEEVE_BONDS: "protection in equity sell offs and dry powder to rebalance into weakness",
-                  config.SLEEVE_DIVERS: "assets that behave differently from tech stocks"}
-    for sname, reason in why_sleeve.items():
-        items = [(t, v) for t, v in dw.items() if config.sleeve_of(t) == sname]
-        if items:
-            st.markdown(f"**{sname}, {pct(sum(v for _, v in items))}:** " + ", ".join(
-                f"{t} ({config.ETFS[t][0]}) {pct(v)}" for t, v in items) + f". Why: {reason}.")
+    st.markdown("#### A note from your banker")
+    with st.container(border=True):
+        st.markdown(f"<div style='font-size:1.08rem; line-height:1.7'>{str(d.get('letter', '')).replace('$', '&#36;').replace(chr(10), '<br>')}</div>",
+                    unsafe_allow_html=True)
+    st.markdown("#### What each part of your money does")
+    plain = {config.SLEEVE_INDEX: "Grows with the whole market at very low cost, so your result never depends on a few companies.",
+             config.SLEEVE_STOCKS: "A small group of fast growing companies from the themes you believe in, each one capped in size.",
+             config.SLEEVE_BONDS: "Your cushion: tends to hold up when shares fall, pays interest, and gives us cash to buy when prices are low.",
+             config.SLEEVE_CREDIT: "Loans to large companies that pay more interest than government bonds.",
+             config.SLEEVE_REAL: "Real assets like gold, property and commodities, which often rise when inflation does.",
+             config.SLEEVE_ALTS: "Steadier funds and strategies that tend to behave differently from technology shares.",
+             config.SLEEVE_CRYPTO: "A small, capped position in Bitcoin, at your request."}
+    tr = res["trades"]
+    for sname in config.SLEEVES:
+        rows_ = tr[tr["Ticker"].map(config.sleeve_of) == sname]
+        if rows_.empty:
+            continue
+        names = ", ".join(rows_["Ticker"])
+        st.markdown(f"**\\${rows_['Dollars'].sum():,.0f} · {sname}** ({names})  \n{plain[sname]}")
+    with st.expander("Technical details: suitability, limits and committee reasoning"):
+        st.markdown(esc(d.get("portfolio_thesis", "")))
+        st.markdown(f"**Suitability check.** {esc(d.get('suitability', ''))}")
+        oi = res["opt_info"]
+        lim = (f"Hard limits enforced by the optimiser: max {pct(prof['max_position'], 0)} per stock, volatility at most "
+               f"{pct(oi['target_vol'])}, a loss smaller than {pct(prof['max_drawdown'], 0)} in every historical stress replay, "
+               f"government bonds and cash at least {pct(oi['policy']['min_bonds'], 0)}, index funds at least {pct(oi['policy']['min_index'], 0)}, "
+               f"single stocks at most {pct(oi['policy']['max_single_stocks'], 0)}.")
+        if oi.get("binding"):
+            lim += " The limits that shaped this portfolio: " + "; ".join(oi["binding"]) + "."
+        st.info(lim)
+        dw = res["defensive_weights"]
+        for sname in config.SLEEVES:
+            items = [(t, v) for t, v in dw.items() if config.sleeve_of(t) == sname]
+            if items:
+                st.markdown(f"**{sname}, {pct(sum(v for _, v in items))}:** " + ", ".join(
+                    f"{t} ({config.ETFS[t][0]}) {pct(v)}" for t, v in items))
     oh, fx = res.get("option_hedge"), res.get("fx_hedge")
     if oh or fx:
         st.markdown("#### 🛡️ Hedges")
@@ -398,7 +414,10 @@ with tabs[0]:
                 desc = (f"Buy {oh['contracts']} {oh['underlying']} put{'s' if oh['contracts'] > 1 else ''} at strike {oh['put_strike']:.0f}"
                         + (f", sell {oh['contracts']} call{'s' if oh['contracts'] > 1 else ''} at {oh['call_strike']:.0f}" if oh["call_strike"] else "")
                         + f", expiring {oh['expiry']}.")
-                st.markdown(f"**{oh['style']} on the equity exposure.** {desc}")
+                st.markdown(f"**Insurance on your shares ({oh['style'].lower()}).** If the market falls more than "
+                            f"{abs(oh['protection_from']) * 100:.0f}% before {oh['expiry']}, the insurance pays out"
+                            + (f"; to make it cheaper we give up gains above {oh['cap_at'] * 100:.0f}%" if oh.get("cap_at") is not None else "")
+                            + f". In practice: {desc}")
                 q = st.columns(2)
                 kpi(q[0], "Net cost (from T bills)", f"${oh['net_cost']:,.0f} ({pct(oh['net_cost_pct'], 2)})")
                 kpi(q[1], "Protection starts", pct(oh["protection_from"], 0, sign=True))
@@ -591,8 +610,89 @@ with tabs[2]:
     st.plotly_chart(px_.bar(rcdf, barmode="group", color_discrete_sequence=[GREY, PURPLE]).update_layout(
         height=320, yaxis_tickformat=".0%", margin=dict(t=10), legend_title="", xaxis_title="", yaxis_title=""), width="stretch")
 
-# ------------------------------------------------------------------ data
+# ------------------------------------------------------------------ methodology
 with tabs[3]:
+    st.markdown("#### How every number on these pages is produced")
+    st.caption("Nothing is typed in by hand. Each figure is either read from a public data source, computed from that data with the "
+               "formula below, a stated assumption, an AI judgement (labelled), or one of the client's own answers.")
+    oi, mc_, oh_ = res["opt_info"], res["mc"], res.get("option_hedge")
+    pol_ = oi["policy"]
+    fwn = ", ".join(f"{k} {v / sum(res['factor_weights'].values()) * 100:.0f}%" for k, v in res["factor_weights"].items() if v)
+    worst_ = res["stress"]["Portfolio"].min() if len(res["stress"]) else np.nan
+    st_ = res["stats"]
+    rows_m = [
+        ("Expected volatility", pct(oi["exp_vol"]), "Computed from data",
+         "Square root of w x C x w, where w are the portfolio weights and C is the covariance matrix of the daily returns of every holding over "
+         "the last 2 years, annualised by 252 trading days. Correlations between individual stocks are pulled 30% toward their average to cut noise.",
+         "Yahoo Finance adjusted daily closes"),
+        ("Expected return a year", pct(oi["exp_return"]), "Stated assumption",
+         f"Weighted average of long run assumptions: 3 month T bill yield ({pct(res['rf'], 2)}) plus a premium. Stocks: 6% plus 4% per standard "
+         "deviation of their composite score (capped at plus or minus 2). Funds: S&P 500 5%, Nasdaq 100 5.5%, international 5%, Treasuries 0 to 1.2%, "
+         "inflation linked 1%, corporate bonds 1.5 to 2.5%, gold and commodities 1.5%, managed futures 2%, min volatility 4%. Used to rank, not a promise.",
+         "T bill yield from Yahoo Finance ^IRX or FRED; premia are our assumptions"),
+        ("Worst historical stress", pct(worst_), "Computed from data",
+         "Today's weights multiplied by each holding's actual price change between the start and end dates of each crisis. Funds or stocks that did "
+         "not exist yet use their 2 year beta times the index move.",
+         "Yahoo Finance prices; crisis dates: Feb to Mar 2020, Jan to Oct 2022, 24 to 27 Jan 2025, Feb to Apr 2025"),
+        (f"Chance of a fall beyond {pct(prof['max_drawdown'], 0)} in {prof['horizon_years']} years", pct(res["p_breach"], 0), "Data plus assumption",
+         "Monte Carlo: 2,000 simulated paths built by resampling 21 day blocks of this portfolio's own daily returns over the last 5 years, with the "
+         "average return reset to the expected return assumption. The figure is the share of paths whose worst peak to trough fall is bigger than the limit.",
+         "Yahoo Finance daily returns; expected return assumption above"),
+        ("Monte Carlo median and range", f"${np.median(mc_['terminal']):,.0f} (5th to 95th: ${np.percentile(mc_['terminal'], 5):,.0f} to ${np.percentile(mc_['terminal'], 95):,.0f})",
+         "Data plus assumption", "Middle, 5th and 95th percentile of the 2,000 simulated end values.", "As above"),
+        ("3 year return, Sharpe, max drawdown (Risk check)", f"CAGR {pct(st_.get('CAGR'))}, Sharpe {st_.get('Sharpe', float('nan')):.2f}, max fall {pct(st_.get('Max drawdown'))}",
+         "Computed from data, in sample", "Today's weights applied to actual daily returns over the last 3 years. Sharpe is (annual return minus T bill "
+         "yield) divided by annual volatility. Flattering, because today's picks are known winners; see the walk forward test.", "Yahoo Finance daily returns"),
+        ("Walk forward test", "Risk check tab", "Computed from data, out of sample",
+         "Every quarter for 3 years, using only prices known on that date: rank stocks by 12 month momentum minus volatility, pick the top names, "
+         "run the same optimiser, hold until the next quarter. Compared with the benchmark over the same days.", "Yahoo Finance daily prices"),
+        ("Composite stock score and rank", "AI decided tab", "Data plus AI",
+         f"Average of z scores (value minus the universe average, divided by the standard deviation, extremes trimmed at the 5th and 95th "
+         f"percentiles) for each factor, then weighted: {fwn}.",
+         "Yahoo Finance fundamentals, prices and analyst targets; AI news reading; embeddings"),
+        ("Theme fit", "AI decided tab", "AI measurement",
+         f"Cosine similarity between the {config.EMBED_MODEL} embedding of the company's business description and the embedding of each theme "
+         "the client chose; the highest match counts.", "Yahoo Finance business descriptions; Azure OpenAI embeddings"),
+        ("News sentiment", "AI decided tab", "AI judgement",
+         "The AI reads up to 8 recent headlines per company and scores what they mean for the business from minus 1 to plus 1.",
+         "Yahoo Finance or Finnhub headlines; Azure OpenAI"),
+        ("Risk score", f"{prof['risk_tolerance']}/10", "Client answers",
+         f"Willingness ({prof.get('willingness', 'n/a')}) is the average of three answers: self description, reaction to a 20% fall, largest "
+         f"acceptable fall. Ability ({prof.get('ability', 'n/a')}) is the average of horizon and share of wealth, minus points for no emergency "
+         "fund, variable income, regular withdrawals, near term cash needs or a concentrated position. The score is the lower of the two; the AI "
+         "banker may move it by at most 2 points after the follow up questions.", "Questionnaire"),
+        ("Volatility ceiling", pct(oi["target_vol"]), "Rule from client answers",
+         "The lower of 6% plus 2.5% per risk point, and 80% of the largest fall the client accepts.", "Risk score and questionnaire"),
+        ("Bond floor, stock cap, index floor", f"{pct(pol_['min_bonds'], 0)} / {pct(pol_['max_single_stocks'], 0)} / {pct(pol_['min_index'], 0)}",
+         "Rule from client answers", "Government bonds and cash at least 65% minus 5.5% per risk point (between 10% and 60%); single stocks at most "
+         "5% per risk point; index funds at least 20%.", "Risk score"),
+        ("Portfolio weights and dollar amounts", "Your portfolio tab", "Computed",
+         "SciPy SLSQP optimiser: maximise expected return minus a small risk penalty, subject to every limit above, the stress test limit in every "
+         "crisis, a per stock cap, a 40% cap per theme and a minimum T bill holding for near term cash needs. Dollars are weight times $100,000; "
+         "shares are dollars divided by the latest close.", "All of the above"),
+        ("Share of portfolio risk", "Risk check tab", "Computed from data",
+         "Each holding's weight times its covariance with the whole portfolio, divided by the portfolio variance; adds up to 100%.", "Yahoo Finance daily returns"),
+    ]
+    if oh_:
+        rows_m += [
+            ("Hedge cost", f"${oh_['net_cost']:,.0f}", "Data" if oh_["source"].startswith("live") else "Model estimate",
+             f"Contracts = beta of our shares to {oh_['underlying']} ({oh_['beta']:.2f}) times the dollars in shares, divided by 100 times the index "
+             "price, rounded. Cost = contracts x 100 x option mid price ((bid + ask) / 2), minus the call sold for a collar.", oh_["source"]),
+            ("Loss if the index falls 30%, with and without hedge", f"${-oh_['loss_at_minus_30']['without']:,.0f} vs ${-oh_['loss_at_minus_30']['with']:,.0f}",
+             "Computed", "Without: beta x minus 30% x dollars in shares. With: the same plus what the puts pay at expiry, minus the net cost.", "As above"),
+        ]
+    if res.get("fx_hedge"):
+        rows_m.append(("Currency forward rate", f"{res['fx_hedge']['forward_3m']:.4f}" if res["fx_hedge"].get("forward_3m") else "n/a", "Computed from data",
+                       "Spot GBP/USD x (1 + US 3 month rate x 0.25) / (1 + UK 3 month rate x 0.25).", "Yahoo Finance GBPUSD=X, ^IRX; FRED UK 3 month rate"))
+    rows_m.append(("Figures traced to data", f"{res['verification']['verified']}/{res['verification']['total']}", "Automatic check",
+                   "Every percentage, multiple or dollar figure the AI writes is matched against the numbers computed above (within rounding). "
+                   "Anything not found is flagged under the holding.", "The data packet sent to the AI"))
+    mdf = pd.DataFrame(rows_m, columns=["Number shown", "Value now", "Type", "How it is calculated", "Inputs and source"])
+    st.dataframe(mdf, hide_index=True, width="stretch", height=640,
+                 column_config={"How it is calculated": st.column_config.TextColumn(width="large")})
+
+# ------------------------------------------------------------------ data
+with tabs[4]:
     st.markdown("#### Public sources used in this run")
     src = pd.DataFrame(res["sources"]).T.reset_index().rename(columns={"index": "Source"})
     st.dataframe(src, hide_index=True, width="stretch")
@@ -624,7 +724,7 @@ with tabs[3]:
         st.json(res["packet"], expanded=False)
 
 # ------------------------------------------------------------------ chat
-with tabs[4]:
+with tabs[5]:
     st.markdown("Ask anything about the recommendation. Answers are grounded in the same data packet the committee used.")
     if not ss.chat:
         st.caption("Try: *What happens to this portfolio if Nvidia falls 40%?* · *Why so little in Tesla?* · *How would you de-risk this for a 5 year horizon?*")

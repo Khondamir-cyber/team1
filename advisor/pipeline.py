@@ -172,7 +172,7 @@ def run(md: dict, prof: dict, use_ai: bool = True, progress=lambda m: None) -> d
         have = {h.get("ticker") for h in decision.get("holdings", [])}
         decision["holdings"] = [h for h in decision.get("holdings", []) if h.get("ticker") in w.index] + \
                                [dict(h, role=h["role"] + " (added after committee review)") for h in fb["holdings"] if h["ticker"] not in have]
-        for k in ("headline", "portfolio_thesis", "suitability", "key_risks", "dissent"):
+        for k in ("headline", "portfolio_thesis", "suitability", "key_risks", "dissent", "letter"):
             decision.setdefault(k, fb[k])
     decision["holdings"] = [h for h in decision["holdings"] if h.get("ticker") in config.STOCKS]
     order = {t: i for i, t in enumerate(w.index)}

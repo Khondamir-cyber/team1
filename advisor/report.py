@@ -152,7 +152,34 @@ def fallback_decision(packet: dict) -> dict:
         "holdings": [fallback_holding(h) for h in packet["holdings"]],
         "key_risks": ["Concentration in technology growth factors", "Sensitivity to rising real yields", "Single stock earnings risk"],
         "dissent": "AI committee offline: rules based explanation shown.",
+        "letter": fallback_letter(packet),
     }
+
+
+def fallback_letter(packet: dict) -> str:
+    c, sv = packet["client"], packet.get("sleeves_pct", {})
+    name = (c.get("client_name") or "there").split()[0]
+    worst = min(packet["portfolio"]["stress_tests"], key=lambda s: s["portfolio_pct"]) if packet["portfolio"]["stress_tests"] else None
+    parts = []
+    if sv.get("Core index funds"):
+        parts.append(f"About {round(sv['Core index funds'])}% goes into low cost index funds, so your money grows with the whole market "
+                     "and never depends on a handful of companies.")
+    if sv.get("Growth stock picks"):
+        parts.append(f"About {round(sv['Growth stock picks'])}% goes into a small group of companies we think can grow fastest, "
+                     "chosen from the themes you believe in, with no single company allowed to dominate.")
+    if sv.get("Government bonds and cash"):
+        parts.append(f"About {round(sv['Government bonds and cash'])}% sits in government bonds and cash. This is your cushion: it "
+                     "tends to hold up when shares fall, and it gives us money to buy more when prices are low.")
+    other = sum(v for k, v in sv.items() if k not in ("Core index funds", "Growth stock picks", "Government bonds and cash") and v)
+    if other:
+        parts.append(f"The last {round(other)}% is in assets that behave differently from shares, such as gold or lower risk funds, "
+                     "to smooth the ride.")
+    bad = (f" If a year like {worst['scenario'].split(' (')[0]} came back, this mix would have fallen about "
+           f"{abs(round(worst['portfolio_pct']))}%, inside the {round(c['max_drawdown'] * 100)}% you told me you could live with.") if worst else ""
+    return (f"{name}, you told me you want this money to grow over the next {c['horizon_years']} years, but that a big fall would "
+            f"keep you up at night. So I have not simply bought the most exciting stocks. " + " ".join(parts) + bad +
+            " I will review it every quarter, and I will tell you straight away if a company we own stops growing or markets "
+            "change enough that the plan needs to change.")
 
 
 # ---------------------------------------------------------------- verification: every cited number traced to data
@@ -200,7 +227,7 @@ def verify_decision(decision: dict, packet: dict) -> dict:
         total += len(checks)
         good += sum(ok for _, ok in checks)
     all_vals = _numbers(packet, [])
-    port_checks = verify_text(" ".join(str(decision.get(k, "")) for k in ("headline", "portfolio_thesis", "suitability")), all_vals)
+    port_checks = verify_text(" ".join(str(decision.get(k, "")) for k in ("headline", "portfolio_thesis", "suitability", "letter")), all_vals)
     total += len(port_checks)
     good += sum(ok for _, ok in port_checks)
     return {"per_holding": out, "portfolio": port_checks, "total": total, "verified": good}

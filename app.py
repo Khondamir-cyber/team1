@@ -123,6 +123,19 @@ with c2:
         p["max_position"] = a1.slider("Max single position", 0.05, 0.30, float(p["max_position"]), 0.01)
         p["n_holdings"] = a2.slider("Number of stocks", 6, 20, int(p["n_holdings"]))
         p["cash_buffer"] = a1.slider("Minimum T bill holding", 0.0, 0.15, float(p["cash_buffer"]), 0.01)
+        pol = config.strategic_policy(p["risk_tolerance"])
+        st.markdown("**Strategic allocation (core and satellite)**, set from risk tolerance:")
+        if st.checkbox("Customise sleeve limits", value=bool(p.get("policy"))):
+            b1, b2, b3 = st.columns(3)
+            p["policy"] = {
+                "min_bonds": b1.slider("Government bonds and cash, at least", 0.0, 0.8, float((p.get("policy") or pol)["min_bonds"]), 0.01),
+                "min_index": b2.slider("Index funds, at least", 0.0, 0.8, float((p.get("policy") or pol)["min_index"]), 0.01),
+                "max_single_stocks": b3.slider("Single stocks, at most", 0.0, 0.8, float((p.get("policy") or pol)["max_single_stocks"]), 0.01),
+                "max_diversifiers": pol["max_diversifiers"]}
+        else:
+            p["policy"] = None
+            st.caption(f"Government bonds and cash at least {pct(pol['min_bonds'], 0)} · index funds at least {pct(pol['min_index'], 0)} · "
+                       f"single stocks at most {pct(pol['max_single_stocks'], 0)} · gold and min volatility at most {pct(pol['max_diversifiers'], 0)}")
         p["benchmark"] = a2.selectbox("Benchmark", ["QQQ", "SPY"], index=0 if p["benchmark"] == "QQQ" else 1)
         p["themes"] = st.multiselect("Themes", list(config.THEMES), default=p["themes"])
         p["exclude_tickers"] = [t.strip().upper() for t in st.text_input("Exclude tickers (comma separated)", ", ".join(p["exclude_tickers"])).split(",") if t.strip()]
@@ -161,7 +174,8 @@ with tabs[0]:
     v = res["verification"]
     st_ = res["stats"]
     k = st.columns(6)
-    kpi(k[0], f"In {len(res['stock_weights'])} stocks / defensive", f"{pct(res['opt_info']['stock_share'], 0)} / {pct(res['opt_info']['defensive_share'], 0)}")
+    sv = res["opt_info"]["sleeves"]
+    kpi(k[0], "Index · stocks · bonds", f"{sv[config.SLEEVE_INDEX] * 100:.0f} · {sv[config.SLEEVE_STOCKS] * 100:.0f} · {sv[config.SLEEVE_BONDS] * 100:.0f}%")
     kpi(k[1], "Model expected return", pct(res["opt_info"]["exp_return"]))
     kpi(k[2], "Expected volatility", pct(res["opt_info"]["exp_vol"]))
     worst = res["stress"]["Portfolio"].min() if len(res["stress"]) else np.nan
@@ -172,9 +186,10 @@ with tabs[0]:
     left, right = st.columns([1.1, 1])
     with left:
         t = res["trades"].copy()
-        t["Theme"] = t["Ticker"].map(lambda x: config.TICKER_THEME.get(x, "Defensive sleeve"))
-        fig = px_.treemap(t[t["Dollars"] > 0], path=["Theme", "Ticker"], values="Dollars",
-                          color="Theme", color_discrete_sequence=[PURPLE, "#8b5cf6", "#c084fc", YELLOW, "#7c3aed", "#a78bfa", "#ddd6fe", GREY])
+        t["Sleeve"] = t["Ticker"].map(config.sleeve_of)
+        t = t[t["Dollars"] > 0]
+        colors = {config.SLEEVE_INDEX: "#7c3aed", config.SLEEVE_STOCKS: PURPLE, config.SLEEVE_BONDS: "#1f6f9d", config.SLEEVE_DIVERS: YELLOW, "(?)": GREY}
+        fig = px_.treemap(t, path=["Sleeve", "Ticker"], values="Dollars", color="Sleeve", color_discrete_map=colors)
         fig.update_traces(texttemplate="<b>%{label}</b><br>$%{value:,.0f}", textfont_size=14)
         fig.update_layout(margin=dict(t=10, l=0, r=0, b=0), height=420)
         st.plotly_chart(fig, width="stretch")
@@ -191,15 +206,21 @@ with tabs[0]:
     st.markdown(f"**Suitability check.** {esc(d.get('suitability', ''))}")
     oi = res["opt_info"]
     lim = (f"Hard limits enforced by the optimiser: max {pct(prof['max_position'], 0)} per stock, volatility at most "
-           f"{pct(oi['target_vol'])}, and a loss smaller than {pct(prof['max_drawdown'], 0)} in every historical stress replay.")
+           f"{pct(oi['target_vol'])}, a loss smaller than {pct(prof['max_drawdown'], 0)} in every historical stress replay, "
+           f"government bonds and cash at least {pct(oi['policy']['min_bonds'], 0)}, index funds at least {pct(oi['policy']['min_index'], 0)}, "
+           f"single stocks at most {pct(oi['policy']['max_single_stocks'], 0)}.")
     if oi.get("binding"):
         lim += " The limits that shaped this portfolio: " + "; ".join(oi["binding"]) + "."
     st.info(lim)
     dw = res["defensive_weights"]
-    if len(dw):
-        st.markdown("**Defensive sleeve, " + pct(dw.sum()) + ":** " + ", ".join(
-            f"{t} ({config.DEFENSIVE[t][0]}) {pct(v)}" for t, v in dw.items()) +
-            ". Sized by the optimiser so the portfolio stays inside the client's volatility and drawdown limits.")
+    why_sleeve = {config.SLEEVE_INDEX: "broad, cheap market growth so the outcome never rests on a handful of stocks",
+                  config.SLEEVE_BONDS: "protection in equity sell offs and dry powder to rebalance into weakness",
+                  config.SLEEVE_DIVERS: "assets that behave differently from tech stocks"}
+    for sname, reason in why_sleeve.items():
+        items = [(t, v) for t, v in dw.items() if config.sleeve_of(t) == sname]
+        if items:
+            st.markdown(f"**{sname}, {pct(sum(v for _, v in items))}:** " + ", ".join(
+                f"{t} ({config.ETFS[t][0]}) {pct(v)}" for t, v in items) + f". Why: {reason}.")
     if res["removed_by_committee"] or res["caps_by_committee"]:
         chg = [f"removed **{t}** ({r})" for t, r in res["removed_by_committee"].items()] + \
               [f"capped **{t}** at {pct(c, 0)}" for t, c in res["caps_by_committee"].items()]

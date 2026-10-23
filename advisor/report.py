@@ -65,9 +65,10 @@ def build_packet(res: dict) -> dict:
         "macro": {k: (_r(v, 1, 2) if isinstance(v, (int, float)) else v) for k, v in res["macro"].items()},
         "macro_overlay_rules_applied": res["overlay"]["notes"],
         "stock_sleeve_pct": _r(res["opt_info"]["stock_share"], 100),
-        "defensive_sleeve": [{"ticker": t, "holds": config.DEFENSIVE[t][0], "weight_pct": _r(v, 100),
+        "strategic_policy_for_risk_tolerance": {k: _r(v, 100) for k, v in res["opt_info"]["policy"].items()},
+        "sleeves_pct": {k: _r(v, 100) for k, v in res["opt_info"]["sleeves"].items()},
+        "funds": [{"ticker": t, "holds": config.ETFS[t][0], "sleeve": config.ETFS[t][1], "weight_pct": _r(v, 100),
                               "share_of_risk_pct": _r(res["risk_contrib"].get(t), 100)} for t, v in res["defensive_weights"].items()],
-        "defensive_sleeve_pct": _r(res["opt_info"]["defensive_share"], 100),
         "binding_client_limits": res["opt_info"].get("binding", []),
         "portfolio": {
             "expected_return_model_pct": _r(res["opt_info"]["exp_return"], 100),
@@ -124,8 +125,8 @@ def fallback_decision(packet: dict) -> dict:
     c, p = packet["client"], packet["portfolio"]
     worst = min(p["stress_tests"], key=lambda s: s["portfolio_pct"]) if p["stress_tests"] else None
     return {
-        "headline": f"Invest ${packet['amount_usd']:,}: {packet['stock_sleeve_pct']}% in {len(packet['holdings'])} high growth stocks and "
-                    f"{packet['defensive_sleeve_pct']}% in a defensive sleeve sized to the client's risk limits.",
+        "headline": f"Invest ${packet['amount_usd']:,} as a core and satellite growth portfolio: "
+                    + ", ".join(f"{v}% {k.lower()}" for k, v in packet["sleeves_pct"].items() if v) + ".",
         "portfolio_thesis": f"The portfolio targets {c['objective'].lower().rstrip('.')} by holding the highest ranked companies on growth, "
                             f"momentum, quality and theme fit, sized by an optimiser that caps any single stock at "
                             f"{round(c['max_position'] * 100)}% and volatility at or below {round(c['target_vol'] * 100)}%, "

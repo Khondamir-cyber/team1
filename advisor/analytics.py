@@ -193,13 +193,13 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     """Score tilted mean variance over the chosen stocks plus the defensive sleeve, subject to:
     weights sum to 100%, single stock cap, theme cap, volatility ceiling, T bill floor, and (when given) a loss
     no worse than the client's max drawdown in every historical stress window."""
-    defensive = [t for t in config.DEFENSIVE if t in rets.columns and rets[t].iloc[-504:].notna().sum() > 120]
+    defensive = [t for t in config.ETFS if t in rets.columns and rets[t].iloc[-504:].notna().sum() > 120]
     tickers = list(stocks) + defensive
     r = rets[tickers].iloc[-504:].fillna(0)
     cov = shrunk_cov(r, group=list(stocks)).values
     s = score.reindex(stocks).clip(-2, 2).fillna(0).values
     mu = np.concatenate([rf + 0.06 + 0.04 * s,                      # equity premium 6%, +4% per 1 sd of composite score
-                         [rf + config.DEFENSIVE[t][1] for t in defensive]])
+                         [rf + config.ETFS[t][2] for t in defensive]])
     rt = profile.get("risk_tolerance", 8)
     # Risk is controlled mainly by the client's hard limits (volatility ceiling, stress losses, caps):
     # maximise expected return inside that risk budget, with a mild diversification penalty.
@@ -207,14 +207,25 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     target_vol = profile.get("target_vol", 0.28) * vol_mult
     max_dd = profile.get("max_drawdown", 0.35)
     n_s = len(stocks)
-    bounds = [(0.0, min(profile.get("max_position", 0.15), (caps or {}).get(t, 1.0))) for t in stocks]
-    bounds += [(cash if t == config.CASH_PROXY else 0.0, config.DEFENSIVE[t][2]) for t in defensive]
+    pol0 = {**config.strategic_policy(rt), **(profile.get("policy") or {})}
+    per_stock = min(profile.get("max_position", 0.15), pol0["max_single_stocks"] / min(5, max(n_s, 1)))  # at least 5 names
+    bounds = [(0.0, min(per_stock, (caps or {}).get(t, 1.0))) for t in stocks]
+    bounds += [(cash if t == config.CASH_PROXY else 0.0, config.ETFS[t][3]) for t in defensive]
     cons = [{"type": "eq", "fun": lambda w: w.sum() - 1},
             {"type": "ineq", "fun": lambda w: target_vol ** 2 - w @ cov @ w}]
     themes = pd.Series([config.TICKER_THEME.get(t, "Other") for t in stocks])
     for th in themes.unique():
         m = np.concatenate([(themes == th).values.astype(float), np.zeros(len(defensive))])
         cons.append({"type": "ineq", "fun": lambda w, m=m: profile.get("max_theme_weight", 0.4) - m @ w})
+    # strategic policy: core index floor, government bond floor, single stock and diversifier ceilings
+    pol = {**config.strategic_policy(rt), **(profile.get("policy") or {})}
+    sl = np.array([config.sleeve_of(t) for t in tickers])
+    m_st, m_ix = (sl == config.SLEEVE_STOCKS).astype(float), (sl == config.SLEEVE_INDEX).astype(float)
+    m_bd, m_dv = (sl == config.SLEEVE_BONDS).astype(float), (sl == config.SLEEVE_DIVERS).astype(float)
+    cons += [{"type": "ineq", "fun": lambda w: pol["max_single_stocks"] - m_st @ w},
+             {"type": "ineq", "fun": lambda w: m_ix @ w - pol["min_index"]},
+             {"type": "ineq", "fun": lambda w: m_bd @ w - pol["min_bonds"]},
+             {"type": "ineq", "fun": lambda w: pol["max_diversifiers"] - m_dv @ w}]
     scen = {}
     for name, row in (stress or {}).items():
         vec = np.array([row.get(t, 0.0) for t in tickers])
@@ -226,8 +237,16 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
         return all(c["fun"](w) >= -1e-4 for c in cons if c["type"] == "ineq") and abs(w.sum() - 1) < 1e-4
 
     best = None
-    starts = [np.concatenate([np.full(n_s, 0.5 / max(n_s, 1)), np.full(len(defensive), 0.5 / max(len(defensive), 1))])]
-    starts.append(np.array([0.0] * n_s + [1.0 if t == config.CASH_PROXY else 0.0 for t in defensive]))
+    def policy_start(stock_share):
+        w = np.zeros(len(tickers))
+        w[:n_s] = stock_share / max(n_s, 1)
+        ix = [i for i, t in enumerate(tickers) if t in ("VOO", "QQQ")] or [i for i in range(len(tickers)) if m_ix[i]]
+        w[ix] = (1 - stock_share - pol["min_bonds"]) / max(len(ix), 1)
+        cash_j = tickers.index(config.CASH_PROXY) if config.CASH_PROXY in tickers else None
+        if cash_j is not None:
+            w[cash_j] += pol["min_bonds"]
+        return w
+    starts = [policy_start(pol["max_single_stocks"] * 0.8), policy_start(pol["max_single_stocks"] * 0.3)]
     for w0 in starts:
         res = minimize(obj, np.clip(w0, [b[0] for b in bounds], [b[1] for b in bounds]), method="SLSQP",
                        bounds=bounds, constraints=cons, options={"maxiter": 800, "ftol": 1e-10})
@@ -237,19 +256,19 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     if best is not None:
         wv = np.clip(best.x, 0, None)
         info["converged"] = True
-    else:  # guaranteed fallback: shrink a capped equal weight stock sleeve until every limit holds, rest in T bills
+    else:  # guaranteed fallback: shrink the risky part of the policy portfolio until every limit holds, rest in T bills
         info["converged"] = False
-        base = np.array([min(1.0 / max(n_s, 1), b[1]) for b in bounds[:n_s]] + [0.0] * len(defensive))
-        cash_i = n_s + defensive.index(config.CASH_PROXY) if config.CASH_PROXY in defensive else None
-        wv = None
+        base = policy_start(pol["max_single_stocks"] * 0.5)
+        cash_i = tickers.index(config.CASH_PROXY) if config.CASH_PROXY in tickers else None
+        wv = base
         for k in np.linspace(1, 0, 41):
-            cand = base * k
+            cand = base.copy()
+            cand[(m_st + m_ix + m_dv) > 0] *= k
             if cash_i is not None:
-                cand[cash_i] = 1 - cand.sum()
+                cand[cash_i] += 1 - cand.sum()
             if feasible(cand):
                 wv = cand
                 break
-        wv = wv if wv is not None else base * 0
         info["note"] = "Optimiser fell back to a scaled equal weight portfolio to respect every client limit."
     wv = wv / wv.sum()
     w = pd.Series(wv, index=tickers)
@@ -258,6 +277,9 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     info["mu"] = dict(zip(tickers, mu))
     info["stock_share"] = float(wv[:n_s].sum())
     info["defensive_share"] = float(wv[n_s:].sum())
+    info["sleeves"] = {name: float(m @ wv) for name, m in [(config.SLEEVE_INDEX, m_ix), (config.SLEEVE_STOCKS, m_st),
+                                                           (config.SLEEVE_BONDS, m_bd), (config.SLEEVE_DIVERS, m_dv)]}
+    info["policy"] = pol
     info["stress_returns"] = {k: float(v @ wv) for k, v in scen.items()}
     binding = []
     if info["exp_vol"] > target_vol - 0.005:
@@ -265,6 +287,13 @@ def optimise(stocks: list[str], score: pd.Series, rets: pd.DataFrame, profile: d
     for k, v in info["stress_returns"].items():
         if v < -max_dd * 0.98 + 0.006:
             binding.append(f"max loss of {max_dd * 100:.0f}% in the {k.split(' (')[0]} replay")
+    sv = info["sleeves"]
+    if sv[config.SLEEVE_BONDS] < pol["min_bonds"] + 0.005:
+        binding.append(f"government bond floor of {pol['min_bonds'] * 100:.0f}%")
+    if sv[config.SLEEVE_STOCKS] > pol["max_single_stocks"] - 0.005:
+        binding.append(f"single stock satellite cap of {pol['max_single_stocks'] * 100:.0f}%")
+    if sv[config.SLEEVE_INDEX] < pol["min_index"] + 0.005:
+        binding.append(f"index fund core floor of {pol['min_index'] * 100:.0f}%")
     info["binding"] = binding
     w = w[w > 0.004]
     w = (w / w.sum()).sort_values(ascending=False) if w.sum() else w
@@ -388,7 +417,8 @@ def trade_list(w: pd.Series, prices: pd.Series, cash: float, amount: float, frac
         shares = dollars / p if fractional else np.floor(dollars / p)
         rows.append({"Ticker": t, "Weight": wt, "Dollars": shares * p, "Price": p, "Shares": shares})
     df = pd.DataFrame(rows)
-    df.insert(1, "Holding", [config.DEFENSIVE[t][0] if t in config.DEFENSIVE else "" for t in df["Ticker"]])
+    df.insert(1, "Holding", [config.ETFS[t][0] if t in config.ETFS else "" for t in df["Ticker"]])
+    df.insert(2, "Sleeve", [config.sleeve_of(t) for t in df["Ticker"]])
     invested = df["Dollars"].sum()
     left = amount - invested
     if abs(left) > 0.5:

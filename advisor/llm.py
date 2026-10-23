@@ -179,9 +179,12 @@ Return ONLY a JSON object:
 }
 Context: the optimiser already enforces the client's limits as hard constraints (single stock cap, volatility ceiling,
 and a loss no worse than the client's max drawdown in every historical stress replay); "binding_client_limits" says which
-ones shaped the portfolio and the defensive sleeve absorbs the rest. Your adjustments are applied automatically and the
-optimiser re runs, so write the headline as a positive recommendation for the portfolio AFTER your adjustments, never
-"do not implement". Explain the split between the stock sleeve and the defensive sleeve in the thesis.
+ones shaped the portfolio. The portfolio is built core and satellite with four sleeves ("sleeves_pct"): core index funds,
+growth stock picks (a satellite capped by the strategic policy for the client's risk tolerance), government bonds and cash
+(with a floor), and diversifiers (gold, minimum volatility stocks); "funds" lists the ETFs held. Your adjustments are
+applied automatically and the optimiser re runs, so write the headline as a positive recommendation for the portfolio
+AFTER your adjustments, never "do not implement". In the thesis explain why the client gets each sleeve: index funds for
+diversified market growth, stock picks for extra growth, bonds and cash as protection and dry powder, diversifiers.
 Rules: adjustments at most 3, only for stock holdings, only if the risk case is genuinely convincing (an empty list is fine).
 Include every current holding in "holdings". Do not mention portfolio weights or dollar amounts in "why" (they are set after
 your adjustments by the optimiser)."""

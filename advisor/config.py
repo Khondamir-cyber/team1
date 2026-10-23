@@ -36,17 +36,38 @@ STOCKS = list(TICKER_THEME)
 BENCHMARKS = ["QQQ", "SPY"]
 CASH_PROXY = "SGOV"  # iShares 0 to 3 Month Treasury Bond ETF, used for the liquidity sleeve
 
-# Defensive sleeve the optimiser can use to respect the client's risk limits.
-# (description, long run premium over T bills assumed for the optimiser, max weight)
-DEFENSIVE = {
-    "SGOV": ("0 to 3 month US T bills", 0.000, 1.00),
-    "SHY": ("1 to 3 year US Treasuries", 0.003, 0.40),
-    "IEF": ("7 to 10 year US Treasuries", 0.010, 0.35),
-    "TIP": ("Inflation linked US Treasuries", 0.010, 0.25),
-    "GLD": ("Gold", 0.015, 0.10),
-    "USMV": ("US minimum volatility equities", 0.040, 0.30),
+# Building blocks around the stock picks (core and satellite construction).
+# ticker: (what it holds, sleeve, long run premium over T bills assumed by the optimiser, max weight)
+SLEEVE_INDEX, SLEEVE_STOCKS, SLEEVE_BONDS, SLEEVE_DIVERS = "Core index funds", "Growth stock picks", "Government bonds and cash", "Diversifiers"
+ETFS = {
+    "VOO": ("Vanguard S&P 500 index fund", SLEEVE_INDEX, 0.050, 0.40),
+    "QQQ": ("Invesco Nasdaq 100 index fund", SLEEVE_INDEX, 0.055, 0.30),
+    "VXUS": ("Vanguard international stocks index fund", SLEEVE_INDEX, 0.050, 0.20),
+    "SGOV": ("iShares 0 to 3 month US T bills", SLEEVE_BONDS, 0.000, 1.00),
+    "SHY": ("iShares 1 to 3 year US Treasuries", SLEEVE_BONDS, 0.003, 0.40),
+    "IEF": ("iShares 7 to 10 year US Treasuries", SLEEVE_BONDS, 0.010, 0.35),
+    "TIP": ("iShares inflation linked US Treasuries", SLEEVE_BONDS, 0.010, 0.25),
+    "GLD": ("SPDR Gold Shares", SLEEVE_DIVERS, 0.015, 0.10),
+    "USMV": ("iShares US minimum volatility stocks", SLEEVE_DIVERS, 0.040, 0.20),
 }
-ALL_TICKERS = STOCKS + BENCHMARKS + list(DEFENSIVE)
+DEFENSIVE = ETFS  # backwards compatible name
+ALL_TICKERS = STOCKS + [b for b in BENCHMARKS if b not in ETFS] + list(ETFS)
+
+
+def sleeve_of(t: str) -> str:
+    return ETFS[t][1] if t in ETFS else SLEEVE_STOCKS
+
+
+def strategic_policy(risk_tolerance: int) -> dict:
+    """Strategic asset allocation limits for a given risk tolerance (1 cautious to 10 aggressive).
+    Even the most aggressive client keeps index fund core and government bonds; single stocks are a satellite."""
+    rt = int(min(max(risk_tolerance, 1), 10))
+    return {
+        "min_bonds": round(min(0.60, max(0.10, 0.65 - 0.055 * rt)), 2),      # rt 8: 21%, rt 5: 38%, rt 2: 54%
+        "max_single_stocks": round(0.05 * rt, 2),                            # rt 8: 40%, rt 5: 25%, rt 2: 10%
+        "min_index": 0.20 if rt >= 3 else 0.10,
+        "max_diversifiers": 0.15,
+    }
 
 
 def target_vol_for(risk_tolerance: int, max_drawdown: float) -> float:
@@ -123,4 +144,5 @@ DEFAULT_PROFILE = {
     "exclude_sectors": ["Tobacco"],
     "benchmark": "QQQ",
     "fractional_shares": True,
+    "policy": None,   # None = strategic policy derived from risk tolerance
 }
